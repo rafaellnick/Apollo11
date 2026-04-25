@@ -38,6 +38,8 @@ The ESP32 core currently runs a tiny AGC bring-up program that increments an era
 - `mega_dsky_panel/mega_dsky_panel.ino`: Mega-side panel controller
 - `tests/agc_core_selftest.cpp`: desktop self-test for the core
 
+Each Arduino sketch folder also contains local copies of the headers it needs. This is intentional: the Arduino IDE compiles a sketch folder as a standalone unit, so includes like `../shared/dsky_protocol.h` may fail when the sketch is opened directly.
+
 ## First Test Wiring: ESP32 + ESP8266
 
 Use a dedicated UART between the boards.

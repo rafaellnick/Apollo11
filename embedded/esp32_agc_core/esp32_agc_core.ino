@@ -1,5 +1,5 @@
-#include "../shared/agc_core.h"
-#include "../shared/dsky_protocol.h"
+#include "agc_core.h"
+#include "dsky_protocol.h"
 
 #include <Arduino.h>
 #include <stdlib.h>

@@ -1,4 +1,4 @@
-#include "../shared/dsky_protocol.h"
+#include "dsky_protocol.h"
 
 #include <Arduino.h>
 #include <LiquidCrystal.h>
