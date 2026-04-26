@@ -46,7 +46,15 @@ enum class EntryMode : uint8_t {
   Noun,
 };
 
+enum class UsbOutputMode : uint8_t {
+  Quiet = 0,
+  Clean,
+  Raw,
+  Both,
+};
+
 EntryMode entryMode = EntryMode::Idle;
+UsbOutputMode usbOutputMode = UsbOutputMode::Clean;
 char pendingDigits[3] = {'0', '0', '\0'};
 uint8_t pendingCount = 0;
 uint32_t manualLampMask = 0;
@@ -383,6 +391,53 @@ void emitCoreStatus(Stream& port) {
   port.println(static_cast<unsigned int>(agcCore.fault()));
 }
 
+const __FlashStringHelper* runStateText() {
+  switch (agcCore.runState()) {
+    case agc::Core::RunState::Running:
+      return F("RUN");
+    case agc::Core::RunState::Halted:
+      return F("HALT");
+    case agc::Core::RunState::Faulted:
+      return F("FAULT");
+  }
+
+  return F("?");
+}
+
+void printTwoDigits(Stream& port, uint8_t value) {
+  if (value < 10) {
+    port.print('0');
+  }
+  port.print(value);
+}
+
+void printFourDigits(Stream& port, uint16_t value) {
+  value %= 10000;
+
+  if (value < 1000) {
+    port.print('0');
+  }
+  if (value < 100) {
+    port.print('0');
+  }
+  if (value < 10) {
+    port.print('0');
+  }
+  port.print(value);
+}
+
+void printSignedFour(Stream& port, int value) {
+  if (value < 0) {
+    port.print('-');
+    value = -value;
+  } else {
+    port.print('+');
+  }
+
+  value %= 10000;
+  printFourDigits(port, static_cast<uint16_t>(value));
+}
+
 void emitJoystickStatus(Stream& port) {
   port.print(F("JOY RAWX="));
   port.print(joystick.rawX);
@@ -400,39 +455,65 @@ void emitJoystickStatus(Stream& port) {
   port.println(joystick.centerY);
 }
 
-void emitMonitorLine(Stream& port) {
-  port.print(F("MONITOR P="));
-  port.print(state.program);
-  port.print(F(" V="));
-  port.print(state.verb);
-  port.print(F(" N="));
-  port.print(state.noun);
-  port.print(F(" R1="));
+void emitCleanStatus(Stream& port) {
+  port.print(F("AGC P"));
+  printTwoDigits(port, state.program);
+  port.print(F(" V"));
+  printTwoDigits(port, state.verb);
+  port.print(F(" N"));
+  printTwoDigits(port, state.noun);
+  port.print(F(" | R1 "));
   port.print(state.r1);
-  port.print(F(" R2="));
+  port.print(F(" R2 "));
   port.print(state.r2);
-  port.print(F(" R3="));
+  port.print(F(" R3 "));
   port.print(state.r3);
-  port.print(F(" ALARM="));
-  port.print(state.alarm);
-  port.print(F(" LAMPS="));
-  port.print(state.lampMask, HEX);
-  port.print(F(" JOYX="));
-  port.print(joystick.normalizedX);
-  port.print(F(" JOYY="));
-  port.print(joystick.normalizedY);
-  port.print(F(" JOYSW="));
+  port.print(F(" | ALM "));
+  printFourDigits(port, state.alarm);
+  port.print(F(" | JOY "));
+  printSignedFour(port, joystick.normalizedX);
+  port.print(',');
+  printSignedFour(port, joystick.normalizedY);
+  port.print(',');
   port.print(joystick.switchPressed ? 1 : 0);
-  port.print(F(" Z="));
+  port.print(F(" | Z "));
   port.print(agcCore.getZ(), OCT);
-  port.print(F(" A="));
+  port.print(F(" A "));
   port.print(agcCore.getA(), OCT);
-  port.print(F(" CYCLES="));
+  port.print(F(" | CYC "));
   port.print(agcCore.cycles());
-  port.print(F(" RUN="));
-  port.print(static_cast<unsigned int>(agcCore.runState()));
-  port.print(F(" FAULT="));
-  port.println(static_cast<unsigned int>(agcCore.fault()));
+  port.print(F(" | "));
+  port.println(runStateText());
+}
+
+bool usbWantsRawState() {
+  return usbOutputMode == UsbOutputMode::Raw ||
+         usbOutputMode == UsbOutputMode::Both;
+}
+
+bool usbWantsCleanStatus() {
+  return usbOutputMode == UsbOutputMode::Clean ||
+         usbOutputMode == UsbOutputMode::Both;
+}
+
+void setUsbOutputMode(UsbOutputMode mode) {
+  usbOutputMode = mode;
+
+  Serial.print(F("USB output: "));
+  switch (usbOutputMode) {
+    case UsbOutputMode::Quiet:
+      Serial.println(F("QUIET"));
+      break;
+    case UsbOutputMode::Clean:
+      Serial.println(F("CLEAN"));
+      break;
+    case UsbOutputMode::Raw:
+      Serial.println(F("RAW"));
+      break;
+    case UsbOutputMode::Both:
+      Serial.println(F("BOTH"));
+      break;
+  }
 }
 
 void handleConsoleCommand(char* line) {
@@ -443,6 +524,8 @@ void handleConsoleCommand(char* line) {
     Serial.println(F("  PEEK,<octal-address>"));
     Serial.println(F("  POKE,<octal-address>,<octal-word>"));
     Serial.println(F("  JOY JOYCAL"));
+    Serial.println(F("  STATUS"));
+    Serial.println(F("  USB,CLEAN USB,RAW USB,BOTH USB,QUIET"));
     Serial.println(F("  ALARM,<code> CLEARALARM"));
     return;
   }
@@ -481,8 +564,33 @@ void handleConsoleCommand(char* line) {
     return;
   }
 
+  if (strcmp(line, "STATUS") == 0) {
+    emitCleanStatus(Serial);
+    return;
+  }
+
   if (strcmp(line, "CORE") == 0) {
     emitCoreStatus(Serial);
+    return;
+  }
+
+  if (strcmp(line, "USB,CLEAN") == 0) {
+    setUsbOutputMode(UsbOutputMode::Clean);
+    return;
+  }
+
+  if (strcmp(line, "USB,RAW") == 0) {
+    setUsbOutputMode(UsbOutputMode::Raw);
+    return;
+  }
+
+  if (strcmp(line, "USB,BOTH") == 0) {
+    setUsbOutputMode(UsbOutputMode::Both);
+    return;
+  }
+
+  if (strcmp(line, "USB,QUIET") == 0) {
+    setUsbOutputMode(UsbOutputMode::Quiet);
     return;
   }
 
@@ -615,9 +723,8 @@ void setup() {
 
   delay(250);
   Serial.println(F("ESP32 AGC core layer ready."));
-  Serial.println(F("Type HELP or send KEY,<name> over USB serial."));
-  emitCoreStatus(Serial);
-  emitStateFrame(Serial);
+  Serial.println(F("USB output: CLEAN. Type HELP for commands."));
+  emitCleanStatus(Serial);
 }
 
 void loop() {
@@ -644,12 +751,16 @@ void loop() {
   if (stateDirty || now - lastTelemetryMs >= kTelemetryPeriodMs) {
     lastTelemetryMs = now;
     emitStateFrame(panelSerial);
-    emitStateFrame(Serial);
+    if (usbWantsRawState()) {
+      emitStateFrame(Serial);
+    }
     stateDirty = false;
   }
 
   if (now - lastMonitorMs >= kMonitorPeriodMs) {
     lastMonitorMs = now;
-    emitMonitorLine(Serial);
+    if (usbWantsCleanStatus()) {
+      emitCleanStatus(Serial);
+    }
   }
 }

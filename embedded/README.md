@@ -88,13 +88,16 @@ Open the ESP32 USB serial monitor at `115200`.
 
 The ESP32 automatically prints:
 
-- `STATE,...` machine-readable DSKY frames every 250 ms
-- `MONITOR ...` human-readable AGC status once per second
+- clean `AGC ...` human-readable status once per second
+- `STATE,...` machine-readable frames to the DSKY slave every 250 ms
 - `CORE ...` when you type `CORE`
+
+By default, the PC USB serial uses clean output only. The DSKY UART still receives raw `STATE,...` frames.
 
 Useful ESP32 USB commands:
 
 - `HELP`
+- `STATUS`
 - `CORE`
 - `STATE`
 - `STEP`
@@ -105,6 +108,10 @@ Useful ESP32 USB commands:
 - `POKE,<octal-address>,<octal-word>`
 - `JOY`
 - `JOYCAL`
+- `USB,CLEAN`
+- `USB,RAW`
+- `USB,BOTH`
+- `USB,QUIET`
 - `KEY,VERB`
 - `KEY,NOUN`
 - `KEY,3`
@@ -229,7 +236,7 @@ STATE,0,16,36,+00012,+00034,+00056,1202,1,96,1234
 3. Open USB serial on both boards at `115200`.
 4. Power both boards with a shared ground and connect the UART link.
 5. On the ESP8266 serial monitor, type `V`, `3`, `7`, `N`, `3`, `6`.
-6. Watch the ESP32 serial monitor for `STATE` and `MONITOR` updates.
+6. Watch the ESP32 serial monitor for clean `AGC ...` status updates.
 
 ## What this is not yet
 
