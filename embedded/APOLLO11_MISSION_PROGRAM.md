@@ -178,6 +178,7 @@ Implementado neste bloco:
 - mapa inicial de nouns reais do `PINBALL` para consulta serial
 - modelo de telemetria de missao com helpers fisicos leves para subida, costa, orbita, descida e reentrada
 - extensao `PHASE,...` do protocolo para o Web DSKY exibir fase e nomes dos registradores
+- harness `agc_trace_runner` e comparador CSV para validar o core contra traces normalizados do yaAGC/VirtualAGC
 
 Ainda falta para ficar historicamente fiel:
 

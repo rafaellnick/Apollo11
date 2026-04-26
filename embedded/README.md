@@ -55,12 +55,15 @@ The ESP32 core currently runs a tiny AGC bring-up program that increments an era
 - `ROPE_BUILD.md`: rope conversion and loading path
 - `tools/rope_to_header.py`: converts rope word dumps into an ESP32 header
 - `tools/build_rope_image.ps1`: validates `Comanche055`/`Luminary099`, runs `yaYUL` when available, and converts `MAIN.agc.bin`
+- `tools/run_agc_trace_validation.ps1`: builds and runs the desktop AGC trace harness
+- `tools/compare_agc_trace.ps1`: compares embedded-core trace CSVs against normalized yaAGC/VirtualAGC traces
 - `shared/pinball_nouns.h`: first real PINBALL noun reference map
 - `esp8266_dsky_slave/esp8266_dsky_slave.ino`: ESP8266 DSKY slave, serial bridge, and web server
 - `esp8266_dsky_slave/web_dsky_page.h`: embedded browser DSKY page served by the ESP8266
 - `esp8266_dsky_slave/wifi_config.h.example`: optional local Wi-Fi config template
 - `mega_dsky_panel/mega_dsky_panel.ino`: Mega-side panel controller
 - `tests/agc_core_selftest.cpp`: desktop self-test for the core
+- `tests/agc_trace_runner.cpp`: deterministic trace emitter for core-vs-yaAGC validation
 - `tests/agc_peripherals_selftest.cpp`: desktop self-test for keyrupt/downrupt/downlink behavior
 - `tests/mission_physics_selftest.cpp`: desktop self-test for mission telemetry helpers
 

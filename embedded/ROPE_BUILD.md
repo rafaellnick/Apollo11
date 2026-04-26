@@ -73,6 +73,30 @@ CORE
 
 `ROPE,LOAD` copies the generated fixed-memory banks into the AGC core and starts execution at the boot address.
 
+## Trace validation path
+
+The repository now includes a deterministic desktop trace harness for validating the embedded core against a yaAGC/VirtualAGC reference trace.
+
+Build and emit the current embedded-core trace:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\run_agc_trace_validation.ps1
+```
+
+Compare it with a reference CSV:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\run_agc_trace_validation.ps1 -ReferenceTrace path\to\yaagc_trace.csv
+```
+
+The candidate trace is written to `embedded/tests/agc_trace_candidate.csv`. The trace schema is:
+
+```text
+step,pc,instr,extended,a,l,q,z,eb,fb,bb,cyc,mct,irq,ch010,ch015
+```
+
+`embedded/tests/agc_trace_runner.cpp` deliberately exercises the layers that need historical validation first: Block II opcode/quarter decoding, editing-safe register reads, 9-bit I/O channel operations, branch timing, and the core MCT counter. A trace generated from yaAGC/VirtualAGC should be normalized to the same CSV columns before using `embedded/tools/compare_agc_trace.ps1`.
+
 ## Current emulator status
 
 The core now has:

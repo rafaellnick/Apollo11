@@ -139,7 +139,8 @@ class Core {
 
     writeFixed(kBootAddress + 0000, encodeBasic(4, constComplementOne));
     writeFixed(kBootAddress + 0001, encodeBasic(6, kPanelCounter));
-    writeFixed(kBootAddress + 0002, encodeBasic(5, kPanelCounter));
+    writeFixed(kBootAddress + 0002,
+               static_cast<uint16_t>(054000 | kPanelCounter));
     writeFixed(kBootAddress + 0003, encodeBasic(0, kBootAddress));
     writeFixed(constComplementOne, negate(fromInt(1)));
   }
