@@ -23,7 +23,12 @@ What is implemented now:
 - a shared DSKY serial protocol
 - a reusable `agc::Core` with 15-bit words, erasable/fixed memory, register aliases, and a starter instruction loop
 - fixed-bank rope image loading hooks for `yaYUL` output
-- initial I/O channel, interrupt, and extended-instruction plumbing in the AGC core
+- explicit Block II basic/extracode opcode decoding with quarter-code/peripheral-code dispatch
+- Block II address decoding for unswitched/switched erasable, common fixed, and fixed-fixed windows
+- read/write editing behavior for `CYR`, `SR`, `CYL`, and `EDOP`
+- 9-bit AGC I/O channels, including the `L`/`Q` channel aliases and `SUPERBNK` bank-selection bit
+- MCT-based instruction cycle accounting for core execution and scheduled peripheral timing
+- initial interrupt, `DOWNRUPT`, keyrupt, uplink, and downlink plumbing in the AGC core
 - a deterministic peripheral layer for keyrupt/uplink, downrupt, and downlink channel monitoring
 - physics-inspired mission telemetry helpers for ascent, coast, orbit, descent, and reentry
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
@@ -60,6 +65,8 @@ The ESP32 core currently runs a tiny AGC bring-up program that increments an era
 - `tests/mission_physics_selftest.cpp`: desktop self-test for mission telemetry helpers
 
 Each Arduino sketch folder also contains local copies of the headers it needs. This is intentional: the Arduino IDE compiles a sketch folder as a standalone unit, so includes like `../shared/dsky_protocol.h` may fail when the sketch is opened directly.
+
+When changing `shared/agc_core.h` or `shared/agc_peripherals.h`, sync the matching copies in `esp32_agc_core/` before opening the sketch in the Arduino IDE.
 
 ## First Test Wiring: ESP32 + ESP8266
 
@@ -170,6 +177,8 @@ The ESP32 automatically prints:
 - clean `AGC ...` human-readable status once per second
 - `STATE,...` and `PHASE,...` machine-readable frames to the DSKY slave every 250 ms
 - `CORE ...` when you type `CORE`
+
+The `CYC` field is now the core's MCT-style cycle counter, not just an instruction counter.
 
 By default, the PC USB serial uses clean output only. The DSKY UART still receives raw `STATE,...` frames.
 

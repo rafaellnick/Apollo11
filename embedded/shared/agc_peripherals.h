@@ -11,16 +11,16 @@ namespace agc {
 
 class Peripherals {
  public:
-  static constexpr uint8_t kChannelCount = Core::kIoChannels;
+  static constexpr uint16_t kChannelCount = Core::kIoChannels;
   static constexpr uint8_t kDownlinkChannelCount = 4;
   static constexpr uint8_t kDownlinkQueueSize = 32;
   static constexpr uint8_t kKeyQueueSize = 16;
 
-  static constexpr uint8_t kChannelDownlink0 = Core::kChannelOut0;
-  static constexpr uint8_t kChannelDownlink1 = Core::kChannelOut1;
-  static constexpr uint8_t kChannelDownlink2 = Core::kChannelOut2;
-  static constexpr uint8_t kChannelDownlink3 = Core::kChannelOut3;
-  static constexpr uint8_t kChannelKeyInput = Core::kChannelKey;
+  static constexpr uint16_t kChannelDownlink0 = Core::kChannelOut0;
+  static constexpr uint16_t kChannelDownlink1 = Core::kChannelOut1;
+  static constexpr uint16_t kChannelDownlink2 = Core::kChannelOut2;
+  static constexpr uint16_t kChannelDownlink3 = Core::kChannelOut3;
+  static constexpr uint16_t kChannelKeyInput = Core::kChannelKey;
 
   static constexpr uint8_t kInterruptDownrupt = 2;
   static constexpr uint8_t kInterruptKeyrupt = 3;
@@ -48,7 +48,7 @@ class Peripherals {
   struct DownlinkWord {
     uint32_t cycle;
     uint16_t sequence;
-    uint8_t channel;
+    uint16_t channel;
     uint16_t word;
     DownlinkReason reason;
   };
@@ -149,11 +149,11 @@ class Peripherals {
     return changed;
   }
 
-  uint16_t readChannel(const Core& core, uint8_t channel) const {
+  uint16_t readChannel(const Core& core, uint16_t channel) const {
     return core.readChannel(channel);
   }
 
-  void writeChannel(Core& core, uint8_t channel, uint16_t value) {
+  void writeChannel(Core& core, uint16_t channel, uint16_t value) {
     channel &= (Core::kIoChannels - 1);
     value &= Core::kWordMask;
     core.writeChannel(channel, value);
@@ -215,7 +215,7 @@ class Peripherals {
   uint32_t lastKeyCycle() const { return lastKeyCycle_; }
   uint16_t lastKeyWord() const { return lastKeyWord_; }
   uint16_t lastDownlinkWord() const { return lastDownlinkWord_; }
-  uint8_t lastDownlinkChannel() const { return lastDownlinkChannel_; }
+  uint16_t lastDownlinkChannel() const { return lastDownlinkChannel_; }
   uint32_t lastDownlinkCycle() const { return lastDownlinkCycle_; }
   uint16_t nextDownlinkSequence() const { return downlinkSequence_; }
 
@@ -266,7 +266,7 @@ class Peripherals {
     return static_cast<int32_t>(cycle - target) >= 0;
   }
 
-  static uint8_t downlinkChannelAt(uint8_t index) {
+  static uint16_t downlinkChannelAt(uint8_t index) {
     switch (index % kDownlinkChannelCount) {
       case 0:
         return kChannelDownlink0;
@@ -279,13 +279,13 @@ class Peripherals {
     }
   }
 
-  static bool isDownlinkChannel(uint8_t channel) {
+  static bool isDownlinkChannel(uint16_t channel) {
     return channel == kChannelDownlink0 || channel == kChannelDownlink1 ||
            channel == kChannelDownlink2 || channel == kChannelDownlink3;
   }
 
   void snapshotChannels(const Core& core) {
-    for (uint8_t channel = 0; channel < Core::kIoChannels; ++channel) {
+    for (uint16_t channel = 0; channel < Core::kIoChannels; ++channel) {
       lastChannels_[channel] = core.readChannel(channel);
     }
   }
@@ -293,7 +293,7 @@ class Peripherals {
   bool captureChangedChannels(const Core& core, uint32_t cycle) {
     bool changed = false;
 
-    for (uint8_t channel = 0; channel < Core::kIoChannels; ++channel) {
+    for (uint16_t channel = 0; channel < Core::kIoChannels; ++channel) {
       const uint16_t word = core.readChannel(channel);
       if (lastChannels_[channel] == word) {
         continue;
@@ -312,7 +312,7 @@ class Peripherals {
   }
 
   void capturePeriodicDownlink(const Core& core, uint32_t cycle) {
-    const uint8_t channel = downlinkChannelAt(nextDownlinkChannelIndex_);
+    const uint16_t channel = downlinkChannelAt(nextDownlinkChannelIndex_);
     nextDownlinkChannelIndex_ =
         static_cast<uint8_t>((nextDownlinkChannelIndex_ + 1) %
                              kDownlinkChannelCount);
@@ -339,7 +339,7 @@ class Peripherals {
     return true;
   }
 
-  void pushDownlink(uint8_t channel, uint16_t word, uint32_t cycle,
+  void pushDownlink(uint16_t channel, uint16_t word, uint32_t cycle,
                     DownlinkReason reason) {
     if (downlinkCount_ == kDownlinkQueueSize) {
       downlinkHead_ = static_cast<uint8_t>((downlinkHead_ + 1) %
@@ -386,7 +386,7 @@ class Peripherals {
   uint32_t lastKeyCycle_ = 0;
   uint16_t lastKeyWord_ = 0;
   uint16_t lastDownlinkWord_ = 0;
-  uint8_t lastDownlinkChannel_ = 0;
+  uint16_t lastDownlinkChannel_ = 0;
   uint32_t lastDownlinkCycle_ = 0;
 };
 

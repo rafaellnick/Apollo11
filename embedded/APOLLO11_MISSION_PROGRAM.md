@@ -168,7 +168,12 @@ Implementado neste bloco:
 - caminho inicial para carregar imagens de rope geradas externamente pelo `yaYUL`
 - helper `embedded/tools/build_rope_image.ps1` para validar `Comanche055`/`Luminary099`, executar `yaYUL` quando disponivel e gerar `rope_image.h`
 - loader `ROPE,INFO` / `ROPE,LOAD` para o ESP32
+- mapa de memoria Block II para erasable direto/chaveado, common fixed e fixed-fixed
 - infraestrutura de instrucoes estendidas, `RELINT`, `INHINT`, `RESUME`, interrupts, canais I/O e registradores especiais basicos no core AGC
+- decoder Block II explicito para opcodes basicos, extracodes, quarter-code e peripheral-code
+- comportamento de leitura/escrita dos registradores de edicao `CYR`, `SR`, `CYL` e `EDOP`
+- canais AGC de 9 bits, incluindo aliases `L`/`Q` e bit `SUPERBNK`
+- contagem de ciclos em MCT para aproximar timing de instrucoes, `KEYRUPT` e `DOWNRUPT`
 - camada deterministica de perifericos para `KEYRUPT`, `DOWNRUPT`, uplink por teclado e fila de downlink
 - mapa inicial de nouns reais do `PINBALL` para consulta serial
 - modelo de telemetria de missao com helpers fisicos leves para subida, costa, orbita, descida e reentrada
@@ -177,6 +182,5 @@ Implementado neste bloco:
 Ainda falta para ficar historicamente fiel:
 
 - ter um `yaYUL` executavel no ambiente e validar uma imagem real gerada de Comanche/Luminary no ESP32
-- completar a semantica exata de todos os opcodes Block II e modos de enderecamento
-- calibrar timing fiel de interrupts, downrupt, uplink/downlink e perifericos contra o comportamento do AGC/yaAGC
+- validar a semantica de opcodes, modos de enderecamento, interrupts, downrupt, uplink/downlink e perifericos contra traces do yaAGC/VirtualAGC
 - substituir os modelos fisicos leves por simuladores orbitais e de veiculo em alta fidelidade

@@ -29,6 +29,16 @@ int main() {
   assert(word.word == 04567);
   assert(word.reason == agc::Peripherals::kDownlinkChannelChange);
 
+  peripherals.writeChannel(core, 0777, 012345);
+  assert(peripherals.readChannel(core, 0777) == 012345);
+
+  core.reset();
+  core.start();
+  peripherals.reset(core);
+  core.writeChannel(0777, 076543);
+  assert(peripherals.tick(core));
+  assert(peripherals.channelChangeCount() == 1);
+
   core.reset();
   core.start();
   peripherals.reset(core);

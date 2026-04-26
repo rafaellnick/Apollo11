@@ -78,10 +78,11 @@ CORE
 The core now has:
 
 - fixed-bank loading through `agc::RopeImage`
-- fixed-bank window selection through `FBANK`
-- I/O channel storage with `READ/WRITE` style extended operations
-- interrupt request/pending plumbing
-- basic `ZERO`, `CYR`, `SR`, and `CYL` special-register behavior
-- initial extended opcode handling for divide, branch-zero, subtract, channel read/write/and/xor
+- Block II address decoding for unswitched/switched erasable, common fixed through `FBANK`, and fixed-fixed banks 2/3
+- explicit Block II instruction-map dispatch for basic opcodes, extracodes, quarter-code groups, and peripheral-code channel operations
+- I/O channel storage using the AGC 9-bit channel address, including `L`/`Q` channel aliases and `SUPERBNK` bank selection
+- interrupt request/pending plumbing with MCT-based instruction accounting for scheduled `KEYRUPT`/`DOWNRUPT` tests
+- read-side and write-side editing behavior for `CYR`, `SR`, `CYL`, and `EDOP`
+- expanded basic/extracode execution for `DAS`, `LXCH`, `INCR`, `ADS`, `DXCH`, `TS`, `XCH`, `BZF`, `BZMF`, `MSU`, `QXCH`, `AUG`, `DIM`, `DCA`, `DCS`, `SU`, `MP`, and the channel logic instructions
 
-This is still not enough to run the full original Comanche software correctly. The next hard pieces are exact Block II opcode decoding, complete editing-register behavior, downrupt/rupt timing, and faithful channel behavior.
+This is still not enough to run the full original Comanche software correctly. The opcode, editing-register, interrupt/downrupt timing, and channel layers now have executable first-pass models in the embedded core, but they still need validation against yaAGC/VirtualAGC traces before we can call the ESP32 port historically exact.

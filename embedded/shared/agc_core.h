@@ -21,12 +21,21 @@ class Core {
   static constexpr uint16_t kPositiveMask = 037777;
   static constexpr uint16_t kAddressMask = 07777;
   static constexpr uint16_t kErasableWords = 04000;
+  static constexpr uint16_t kErasableBankSize = 00400;
+  static constexpr uint16_t kSwitchedErasableBase = 01400;
+  static constexpr uint16_t kCommonFixedBase = 02000;
+  static constexpr uint16_t kFixedFixedBank2Base = 04000;
+  static constexpr uint16_t kFixedFixedBank3Base = 06000;
   static constexpr uint16_t kFixedBankSize = 02000;
   static constexpr uint8_t kFixedBanks = 36;
   static constexpr size_t kFixedWords =
       static_cast<size_t>(kFixedBanks) * kFixedBankSize;
-  static constexpr uint8_t kIoChannels = 128;
+  static constexpr uint16_t kLow10Mask = 01777;
+  static constexpr uint16_t kIoAddressMask = 00777;
+  static constexpr uint16_t kQuarterMask = 06000;
+  static constexpr uint16_t kIoChannels = 01000;
   static constexpr uint8_t kInterruptCount = 8;
+  static constexpr uint8_t kRuptEntryMct = 2;
 
   static constexpr uint16_t kRegA = 00000;
   static constexpr uint16_t kRegL = 00001;
@@ -109,6 +118,7 @@ class Core {
     lastAddress_ = 0;
     lastOpcode_ = 0;
     lastExtended_ = false;
+    lastInstructionMct_ = 0;
     loadBringupProgram();
   }
 
@@ -151,7 +161,7 @@ class Core {
       return false;
     }
 
-    serviceInterrupt();
+    const bool ruptServiced = serviceInterrupt();
 
     const uint16_t pc = getZ();
     uint16_t instruction = 0;
@@ -177,15 +187,19 @@ class Core {
     lastOpcode_ = static_cast<uint8_t>((instruction >> 12) & 07);
     lastExtended_ = extendPending_;
 
-    const uint16_t operand = instruction & kAddressMask;
     if (extendPending_) {
       extendPending_ = false;
-      executeExtended(lastOpcode_, operand);
+      lastInstructionMct_ = defaultInstructionMct(instruction, true);
+      executeExtended(instruction);
     } else {
-      executeBasic(lastOpcode_, operand, indexedInstruction);
+      lastInstructionMct_ = defaultInstructionMct(instruction, false);
+      executeBasic(instruction, indexedInstruction);
     }
 
-    cycles_++;
+    cycles_ += lastInstructionMct_;
+    if (ruptServiced) {
+      cycles_ += kRuptEntryMct;
+    }
     return runState_ != RunState::Faulted;
   }
 
@@ -200,8 +214,8 @@ class Core {
   uint16_t read(uint16_t address) const {
     address &= kAddressMask;
 
-    if (address < kErasableWords) {
-      return erasable_[address] & kWordMask;
+    if (isErasableAddress(address)) {
+      return readErasable(resolveErasableIndex(address));
     }
 
     size_t index = 0;
@@ -216,8 +230,8 @@ class Core {
     address &= kAddressMask;
     value &= kWordMask;
 
-    if (address < kErasableWords) {
-      writeErasable(address, value);
+    if (isErasableAddress(address)) {
+      writeErasable(resolveErasableIndex(address), value);
       return true;
     }
 
@@ -231,33 +245,22 @@ class Core {
       return 0;
     }
 
-    return erasable_[address] & kWordMask;
+    const uint16_t value = erasable_[address] & kWordMask;
+    if (isEditingRegister(address)) {
+      erasable_[address] = editValueForAddress(address, value);
+    }
+    return value;
   }
 
   void writeErasable(uint16_t address, uint16_t value) {
     address &= (kErasableWords - 1);
     value &= kWordMask;
 
-    switch (address) {
-      case kRegZERO:
-        return;
-      case kRegCYR:
-        value = rotateRight(value);
-        break;
-      case kRegSR:
-        value = shiftRight(value);
-        break;
-      case kRegCYL:
-        value = rotateLeft(value);
-        break;
-      case kRegEDOP:
-        value = editPolishOpcode(value);
-        break;
-      default:
-        break;
+    if (address == kRegZERO) {
+      return;
     }
 
-    erasable_[address] = value;
+    erasable_[address] = editValueForAddress(address, value);
   }
 
   bool writeFixed(uint16_t address, uint16_t value) {
@@ -315,12 +318,22 @@ class Core {
     return true;
   }
 
-  uint16_t readChannel(uint8_t channel) const {
+  uint16_t readChannel(uint16_t channel) const {
+    channel &= kIoAddressMask;
+    if (channel == kRegL || channel == kRegQ) {
+      return readErasable(channel);
+    }
     return channels_[channel & (kIoChannels - 1)] & kWordMask;
   }
 
-  void writeChannel(uint8_t channel, uint16_t value) {
-    channels_[channel & (kIoChannels - 1)] = value & kWordMask;
+  void writeChannel(uint16_t channel, uint16_t value) {
+    channel &= kIoAddressMask;
+    value &= kWordMask;
+    if (channel == kRegL || channel == kRegQ) {
+      writeErasable(channel, value);
+      return;
+    }
+    channels_[channel & (kIoChannels - 1)] = value;
   }
 
   void setInterruptsEnabled(bool enabled) {
@@ -359,6 +372,7 @@ class Core {
   uint16_t lastInstruction() const { return lastInstruction_; }
   uint16_t lastAddress() const { return lastAddress_; }
   uint8_t lastOpcode() const { return lastOpcode_; }
+  uint8_t lastInstructionMct() const { return lastInstructionMct_; }
 
   static uint16_t encodeBasic(uint8_t opcode, uint16_t operand) {
     return static_cast<uint16_t>(((opcode & 07) << 12) |
@@ -461,8 +475,104 @@ class Core {
                                  ((word >> 1) & kPositiveMask));
   }
 
+  static bool isEditingRegister(uint16_t address) {
+    address &= (kErasableWords - 1);
+    return address == kRegCYR || address == kRegSR ||
+           address == kRegCYL || address == kRegEDOP;
+  }
+
+  static uint16_t editValueForAddress(uint16_t address, uint16_t value) {
+    value &= kWordMask;
+    switch (address & (kErasableWords - 1)) {
+      case kRegCYR:
+        return rotateRight(value);
+      case kRegSR:
+        return shiftRight(value);
+      case kRegCYL:
+        return rotateLeft(value);
+      case kRegEDOP:
+        return editPolishOpcode(value);
+      default:
+        return value;
+    }
+  }
+
   static uint16_t editPolishOpcode(uint16_t word) {
     return static_cast<uint16_t>((word >> 7) & 0177);
+  }
+
+  static uint8_t instructionCode(uint16_t instruction) {
+    return static_cast<uint8_t>((instruction >> 12) & 07);
+  }
+
+  static uint8_t quarterCode(uint16_t instruction) {
+    return static_cast<uint8_t>((instruction >> 10) & 03);
+  }
+
+  static uint8_t peripheralCode(uint16_t instruction) {
+    return static_cast<uint8_t>((instruction >> 9) & 07);
+  }
+
+  static uint16_t address12(uint16_t instruction) {
+    return instruction & kAddressMask;
+  }
+
+  static uint16_t address10(uint16_t instruction) {
+    return instruction & kLow10Mask;
+  }
+
+  static uint16_t previousAddress10(uint16_t instruction) {
+    return static_cast<uint16_t>((instruction - 1U) & kLow10Mask);
+  }
+
+  static uint16_t previousAddress12(uint16_t instruction) {
+    return static_cast<uint16_t>((instruction - 1U) & kAddressMask);
+  }
+
+  static uint16_t nextAddress12(uint16_t address) {
+    return static_cast<uint16_t>((address + 1U) & kAddressMask);
+  }
+
+  static uint16_t nextAddress10(uint16_t address) {
+    return static_cast<uint16_t>((address + 1U) & kLow10Mask);
+  }
+
+  static uint16_t channelAddress(uint16_t instruction) {
+    return instruction & kIoAddressMask;
+  }
+
+  static bool isLow10Operand(uint16_t operand) {
+    return (operand & static_cast<uint16_t>(~kLow10Mask)) == 0;
+  }
+
+  static uint8_t defaultInstructionMct(uint16_t instruction, bool extended) {
+    const uint8_t opcode = instructionCode(instruction);
+    const uint8_t quarter = quarterCode(instruction);
+    const uint16_t operand = address12(instruction);
+
+    if (!extended) {
+      if (opcode == 0) {
+        return 1;
+      }
+      if (opcode == 1 && !isLow10Operand(operand)) {
+        return 1;
+      }
+      if (opcode == 2 && quarter == 0) {
+        return 3;
+      }
+      if (opcode == 5 && quarter == 1) {
+        return 3;
+      }
+      return 2;
+    }
+
+    if (opcode == 1 && isLow10Operand(operand)) {
+      return 6;
+    }
+    if (opcode == 3 || opcode == 4 || opcode == 7) {
+      return 3;
+    }
+    return 2;
   }
 
   static bool isInterruptBoundaryInstruction(uint16_t instruction) {
@@ -472,20 +582,51 @@ class Core {
            instruction == kInstructionExtend;
   }
 
+  static bool isErasableAddress(uint16_t address) {
+    return (address & kAddressMask) < kCommonFixedBase;
+  }
+
+  uint16_t resolveErasableIndex(uint16_t address) const {
+    address &= kAddressMask;
+    if (address < kSwitchedErasableBase) {
+      return address;
+    }
+
+    const uint16_t offset =
+        static_cast<uint16_t>(address - kSwitchedErasableBase);
+    return static_cast<uint16_t>(
+        (selectedErasableBank() * kErasableBankSize + offset) &
+        (kErasableWords - 1));
+  }
+
+  uint8_t selectedErasableBank() const {
+    return static_cast<uint8_t>(readErasable(kRegEBANK) & 07);
+  }
+
   uint8_t selectedFixedBank() const {
-    const uint8_t bank =
+    uint8_t bank =
         static_cast<uint8_t>(readErasable(kRegFBANK) & 077);
+    if ((channels_[0007] & 0100) != 0 && bank >= 030 && bank <= 033) {
+      bank = static_cast<uint8_t>(bank + 010);
+    }
     return bank < kFixedBanks ? bank : static_cast<uint8_t>(bank % kFixedBanks);
   }
 
   bool fixedIndex(uint16_t address, size_t* index) const {
     address &= kAddressMask;
 
-    if (address < 04000) {
+    if (address < kCommonFixedBase) {
       return false;
     }
 
-    const uint8_t bank = address < 06000 ? 2 : selectedFixedBank();
+    uint8_t bank = 0;
+    if (address < kFixedFixedBank2Base) {
+      bank = selectedFixedBank();
+    } else if (address < kFixedFixedBank3Base) {
+      bank = 2;
+    } else {
+      bank = 3;
+    }
     const uint16_t offset = address & (kFixedBankSize - 1);
     const size_t resolved =
         static_cast<size_t>(bank) * kFixedBankSize + offset;
@@ -501,8 +642,13 @@ class Core {
     return true;
   }
 
-  void executeBasic(uint8_t opcode, uint16_t operand, bool indexedInstruction) {
-    switch (opcode & 07) {
+  void executeBasic(uint16_t instruction, bool indexedInstruction) {
+    const uint8_t opcode = instructionCode(instruction);
+    const uint8_t quarter = quarterCode(instruction);
+    const uint16_t operand = address12(instruction);
+    const uint16_t erasable = address10(instruction);
+
+    switch (opcode) {
       case 0:
         if (!indexedInstruction && operand == kInstructionRelint) {
           interruptsEnabled_ = true;
@@ -515,24 +661,23 @@ class Core {
         }
         break;
       case 1:
-        executeCcs(operand);
+        if (!isLow10Operand(operand)) {
+          setZ(operand);
+        } else {
+          executeCcs(erasable);
+        }
         break;
       case 2:
-        indexPending_ = true;
-        indexValue_ = read(operand) & kAddressMask;
+        executeBasicQuarter2(instruction, quarter);
         break;
       case 3:
-        executeXch(operand);
+        setA(read(operand));
         break;
       case 4:
         setA(negate(read(operand)));
         break;
       case 5:
-        if (!indexedInstruction && operand == kRegBRUPT) {
-          resumeFromInterrupt();
-        } else {
-          write(operand, getA());
-        }
+        executeBasicQuarter5(instruction, quarter, indexedInstruction);
         break;
       case 6:
         setA(addOnesComplement(getA(), read(operand)));
@@ -548,39 +693,149 @@ class Core {
     setZ(operand);
   }
 
-  void executeExtended(uint8_t opcode, uint16_t operand) {
-    switch (opcode & 07) {
+  void executeBasicQuarter2(uint16_t instruction, uint8_t quarter) {
+    switch (quarter & 03) {
       case 0:
-        if (operand == kRegQ) {
+        executeDas(previousAddress10(instruction));
+        break;
+      case 1:
+        executeLxch(address10(instruction));
+        break;
+      case 2:
+        executeIncr(address10(instruction));
+        break;
+      case 3:
+        executeAds(address10(instruction));
+        break;
+    }
+  }
+
+  void executeBasicQuarter5(uint16_t instruction,
+                            uint8_t quarter,
+                            bool indexedInstruction) {
+    switch (quarter & 03) {
+      case 0:
+        if (!indexedInstruction && instruction == kInstructionResume) {
           resumeFromInterrupt();
         } else {
-          executeTc(operand);
+          indexPending_ = true;
+          indexValue_ = read(address10(instruction)) & kAddressMask;
         }
         break;
       case 1:
-        executeDivide(operand);
+        executeDxch(previousAddress10(instruction));
         break;
       case 2:
-        if (getA() == 0 || getA() == kWordMask) {
-          setZ(operand);
-        }
+        write(address10(instruction), getA());
         break;
       case 3:
-        setA(addOnesComplement(getA(), negate(read(operand))));
+        executeXch(address10(instruction));
+        break;
+    }
+  }
+
+  void executeExtendedQuarter2(uint16_t instruction, uint8_t quarter) {
+    switch (quarter & 03) {
+      case 0:
+        executeMsu(address10(instruction));
+        break;
+      case 1:
+        executeQxch(address10(instruction));
+        break;
+      case 2:
+        executeAug(address10(instruction));
+        break;
+      case 3:
+        executeDim(address10(instruction));
+        break;
+    }
+  }
+
+  void executeIoInstruction(uint16_t instruction) {
+    const uint8_t operation = peripheralCode(instruction);
+    const uint16_t channel = channelAddress(instruction);
+    const uint16_t channelValue = readChannel(channel);
+    uint16_t result = 0;
+
+    switch (operation) {
+      case 0:
+        setA(channelValue);
+        break;
+      case 1:
+        writeChannel(channel, getA());
+        break;
+      case 2:
+        setA(static_cast<uint16_t>(getA() & channelValue));
+        break;
+      case 3:
+        result = static_cast<uint16_t>(getA() & channelValue);
+        setA(result);
+        writeChannel(channel, result);
         break;
       case 4:
-        setA(readChannel(static_cast<uint8_t>(operand)));
+        setA(static_cast<uint16_t>((getA() | channelValue) & kWordMask));
         break;
       case 5:
-        writeChannel(static_cast<uint8_t>(operand), getA());
+        result = static_cast<uint16_t>((getA() | channelValue) & kWordMask);
+        setA(result);
+        writeChannel(channel, result);
         break;
       case 6:
-        setA(static_cast<uint16_t>(
-            getA() & readChannel(static_cast<uint8_t>(operand))));
+        setA(static_cast<uint16_t>((getA() ^ channelValue) & kWordMask));
         break;
       case 7:
-        setA(static_cast<uint16_t>(
-            getA() ^ readChannel(static_cast<uint8_t>(operand))));
+        writeErasable(kRegZRUPT, getZ());
+        forcedInstruction_ = read(0);
+        forcedInstructionPending_ = true;
+        interruptsInhibited_ = true;
+        break;
+    }
+  }
+
+  void executeExtended(uint16_t instruction) {
+    const uint8_t opcode = instructionCode(instruction);
+    const uint8_t quarter = quarterCode(instruction);
+    const uint16_t operand = address12(instruction);
+    const uint16_t erasable = address10(instruction);
+
+    if (opcode == 0) {
+      executeIoInstruction(instruction);
+      return;
+    }
+
+    switch (opcode) {
+      case 0:
+        break;
+      case 1:
+        if (!isLow10Operand(operand)) {
+          executeBzf(operand);
+        } else {
+          executeDivide(erasable);
+        }
+        break;
+      case 2:
+        executeExtendedQuarter2(instruction, quarter);
+        break;
+      case 3:
+        executeDca(previousAddress12(instruction));
+        break;
+      case 4:
+        executeDcs(previousAddress12(instruction));
+        break;
+      case 5:
+        indexPending_ = true;
+        indexValue_ = read(operand) & kAddressMask;
+        extendPending_ = true;
+        break;
+      case 6:
+        if (!isLow10Operand(operand)) {
+          executeBzmf(operand);
+        } else {
+          executeSu(erasable);
+        }
+        break;
+      case 7:
+        executeMultiply(operand);
         break;
     }
   }
@@ -598,6 +853,169 @@ class Core {
         static_cast<int16_t>(toInt(getA()) % divisor);
     setA(fromInt(quotient));
     writeErasable(kRegL, fromInt(remainder));
+  }
+
+  void executeBzf(uint16_t operand) {
+    const bool branch = getA() == 0 || getA() == kWordMask;
+    lastInstructionMct_ = branch ? 1 : 2;
+    if (branch) {
+      setZ(operand);
+    }
+  }
+
+  void executeBzmf(uint16_t operand) {
+    const uint16_t accumulator = getA();
+    const bool branch = accumulator == 0 || accumulator == kWordMask ||
+                        (accumulator & kSignBit) != 0;
+    lastInstructionMct_ = branch ? 1 : 2;
+    if (branch) {
+      setZ(operand);
+    }
+  }
+
+  void executeSu(uint16_t operand) {
+    setA(addOnesComplement(getA(), negate(read(operand))));
+  }
+
+  void executeMsu(uint16_t operand) {
+    const uint16_t value = read(operand);
+    setA(addOnesComplement(getA(), negate(value)));
+    writeErasable(operand, value);
+  }
+
+  void executeMultiply(uint16_t operand) {
+    const int32_t product =
+        static_cast<int32_t>(toInt(getA())) * static_cast<int32_t>(toInt(read(operand)));
+    const int32_t high = product / 040000;
+    int32_t low = product % 040000;
+    if (low < 0) {
+      low = -low;
+    }
+    setA(fromInt(clampAgcInt(high)));
+    writeErasable(kRegL, fromInt(clampAgcInt(low)));
+  }
+
+  void executeDas(uint16_t operand) {
+    const uint16_t highAddress = operand & kLow10Mask;
+    const uint16_t lowAddress = nextAddress10(highAddress);
+
+    if (highAddress == kRegA) {
+      writeErasable(kRegL, addOnesComplement(readErasable(kRegL),
+                                             readErasable(kRegL)));
+      setA(addOnesComplement(getA(), getA()));
+      return;
+    }
+
+    const uint16_t lowSum =
+        addOnesComplement(read(lowAddress), readErasable(kRegL));
+    const uint16_t highSum = addOnesComplement(read(highAddress), getA());
+    write(lowAddress, lowSum);
+    write(highAddress, highSum);
+    writeErasable(kRegL, 0);
+    setA(0);
+  }
+
+  void executeLxch(uint16_t operand) {
+    const uint16_t address = operand & kLow10Mask;
+    const uint16_t previousL = readErasable(kRegL);
+    writeErasable(kRegL, read(address));
+    write(address, previousL);
+  }
+
+  void executeIncr(uint16_t operand) {
+    const uint16_t address = operand & kLow10Mask;
+    write(address, addOnesComplement(read(address), fromInt(1)));
+  }
+
+  void executeAds(uint16_t operand) {
+    const uint16_t address = operand & kLow10Mask;
+    const uint16_t result = addOnesComplement(read(address), getA());
+    write(address, result);
+    setA(result);
+  }
+
+  void executeDxch(uint16_t operand) {
+    const uint16_t highAddress = operand & kLow10Mask;
+    const uint16_t lowAddress = nextAddress10(highAddress);
+    const uint16_t previousA = getA();
+    const uint16_t previousL = readErasable(kRegL);
+    writeErasable(kRegL, read(lowAddress));
+    setA(read(highAddress));
+    write(lowAddress, previousL);
+    write(highAddress, previousA);
+  }
+
+  void executeQxch(uint16_t operand) {
+    const uint16_t address = operand & kLow10Mask;
+    const uint16_t previousQ = readErasable(kRegQ);
+    writeErasable(kRegQ, read(address));
+    write(address, previousQ);
+  }
+
+  void executeAug(uint16_t operand) {
+    const uint16_t value = read(operand);
+    const SignClass signClass = classify(value);
+    if (signClass == SignClass::Negative ||
+        signClass == SignClass::NegativeZero) {
+      write(operand, addOnesComplement(value, negate(fromInt(1))));
+    } else {
+      write(operand, addOnesComplement(value, fromInt(1)));
+    }
+  }
+
+  void executeDim(uint16_t operand) {
+    const uint16_t value = read(operand);
+    const SignClass signClass = classify(value);
+    if (signClass == SignClass::Positive) {
+      write(operand, addOnesComplement(value, negate(fromInt(1))));
+    } else if (signClass == SignClass::Negative) {
+      write(operand, addOnesComplement(value, fromInt(1)));
+    }
+  }
+
+  void executeDca(uint16_t operand) {
+    const uint16_t highAddress = operand & kAddressMask;
+    const uint16_t lowAddress = nextAddress12(highAddress);
+    const uint16_t lowValue = read(lowAddress);
+    writeErasable(kRegL, lowValue);
+    const uint16_t highValue = read(highAddress);
+    setA(highValue);
+    rewriteIfErasable(lowAddress, lowValue);
+    rewriteIfErasable(highAddress, highValue);
+  }
+
+  void executeDcs(uint16_t operand) {
+    const uint16_t highAddress = operand & kAddressMask;
+    const uint16_t lowAddress = nextAddress12(highAddress);
+    if (highAddress == kRegA) {
+      writeErasable(kRegL, negate(readErasable(kRegL)));
+      setA(negate(getA()));
+      return;
+    }
+
+    const uint16_t lowValue = read(lowAddress);
+    writeErasable(kRegL, negate(lowValue));
+    const uint16_t highValue = read(highAddress);
+    setA(negate(highValue));
+    rewriteIfErasable(lowAddress, lowValue);
+    rewriteIfErasable(highAddress, highValue);
+  }
+
+  void rewriteIfErasable(uint16_t address, uint16_t value) {
+    address &= kAddressMask;
+    if (address < kErasableWords) {
+      writeErasable(address, value);
+    }
+  }
+
+  static int16_t clampAgcInt(int32_t value) {
+    if (value > static_cast<int32_t>(kPositiveMask)) {
+      return static_cast<int16_t>(kPositiveMask);
+    }
+    if (value < -static_cast<int32_t>(kPositiveMask)) {
+      return -static_cast<int16_t>(kPositiveMask);
+    }
+    return static_cast<int16_t>(value);
   }
 
   bool serviceInterrupt() {
@@ -656,7 +1074,6 @@ class Core {
     switch (classify(value)) {
       case SignClass::Positive: {
         const uint16_t counted = decrementMagnitude(value);
-        write(operand, counted);
         setA(counted);
         break;
       }
@@ -667,7 +1084,6 @@ class Core {
       case SignClass::Negative: {
         const uint16_t magnitude = negate(value) & kPositiveMask;
         const uint16_t countedMagnitude = decrementMagnitude(magnitude);
-        write(operand, negate(countedMagnitude));
         setA(countedMagnitude);
         setZ(incrementAddress(getZ(), 2));
         break;
@@ -684,7 +1100,7 @@ class Core {
     runState_ = RunState::Faulted;
   }
 
-  uint16_t erasable_[kErasableWords];
+  mutable uint16_t erasable_[kErasableWords];
   uint16_t fixed_[kFixedWords];
   uint16_t channels_[kIoChannels];
   RunState runState_ = RunState::Halted;
@@ -703,6 +1119,7 @@ class Core {
   uint16_t lastAddress_ = 0;
   uint8_t lastOpcode_ = 0;
   bool lastExtended_ = false;
+  uint8_t lastInstructionMct_ = 0;
 };
 
 }  // namespace agc

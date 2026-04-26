@@ -1549,7 +1549,8 @@ void handleConsoleCommand(char* line) {
   if (strncmp(line, "CHAN,", 5) == 0) {
     char* channelText = line + 5;
     char* valueText = strchr(channelText, ',');
-    const uint8_t channel = static_cast<uint8_t>(parseOctal(channelText));
+    const uint16_t channel =
+        static_cast<uint16_t>(parseOctal(channelText) & agc::Core::kIoAddressMask);
     if (valueText != nullptr) {
       *valueText = '\0';
       valueText++;
