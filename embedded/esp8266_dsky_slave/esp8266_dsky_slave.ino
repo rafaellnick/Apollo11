@@ -1,8 +1,34 @@
 #include "dsky_protocol.h"
+#include "web_dsky_page.h"
 
 #include <Arduino.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
 #include <SoftwareSerial.h>
 #include <string.h>
+
+#if defined(__has_include)
+#if __has_include("wifi_config.h")
+#include "wifi_config.h"
+#endif
+#endif
+
+#ifndef DSKY_WIFI_SSID
+#define DSKY_WIFI_SSID ""
+#endif
+
+#ifndef DSKY_WIFI_PASSWORD
+#define DSKY_WIFI_PASSWORD ""
+#endif
+
+#ifndef DSKY_AP_SSID
+#define DSKY_AP_SSID "AGC-DSKY"
+#endif
+
+#ifndef DSKY_AP_PASSWORD
+#define DSKY_AP_PASSWORD "apollo11"
+#endif
 
 namespace {
 
@@ -13,8 +39,11 @@ constexpr uint8_t kCoreTxPin = 12;  // NodeMCU D6: connect to ESP32 RX2/GPIO16.
 constexpr unsigned long kStatusPeriodMs = 1000;
 constexpr unsigned long kBlinkPeriodMs = 500;
 constexpr unsigned long kLinkTimeoutMs = 5000;
+constexpr unsigned long kWifiConnectTimeoutMs = 12000;
+constexpr const char* kHostname = "agc-dsky";
 
 SoftwareSerial coreSerial(kCoreRxPin, kCoreTxPin);
+ESP8266WebServer webServer(80);
 dsky::State state;
 
 char coreLineBuffer[dsky::kLineBufferSize];
@@ -25,8 +54,12 @@ size_t usbLineLength = 0;
 
 unsigned long lastStateRxMs = 0;
 unsigned long lastStatusMs = 0;
+unsigned long lastKeyTxMs = 0;
 
 bool ledActiveLow = true;
+bool wifiApMode = false;
+bool mdnsActive = false;
+char lastKeyName[12] = "NONE";
 
 void setStatusLed(bool on) {
 #if defined(LED_BUILTIN)
@@ -68,6 +101,8 @@ void sendKey(dsky::Key key) {
   }
 
   coreSerial.println(line);
+  dsky::copyField(lastKeyName, sizeof(lastKeyName), dsky::keyName(key));
+  lastKeyTxMs = millis();
   Serial.print(F("TX->ESP32 "));
   Serial.println(line);
 }
@@ -116,6 +151,173 @@ bool sendShortcutKey(char* line) {
   return false;
 }
 
+String webIpText() {
+  return wifiApMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
+}
+
+String webWifiName() {
+  return wifiApMode ? String(DSKY_AP_SSID) : WiFi.SSID();
+}
+
+void handleRoot() {
+  webServer.sendHeader("Cache-Control", "no-store");
+  webServer.send_P(200, PSTR("text/html; charset=utf-8"), kDskyIndexHtml);
+}
+
+void handleApiState() {
+  char payload[520];
+  const String ip = webIpText();
+  const String wifi = webWifiName();
+  const char* mode = wifiApMode ? "AP" : "STA";
+
+  snprintf(payload, sizeof(payload),
+           "{\"link\":%s,\"program\":%u,\"verb\":%u,\"noun\":%u,"
+           "\"r1\":\"%s\",\"r2\":\"%s\",\"r3\":\"%s\",\"alarm\":%u,"
+           "\"flash\":%s,\"lamps\":%lu,\"missionSeconds\":%lu,"
+           "\"uptimeMs\":%lu,\"lastKey\":\"%s\",\"lastKeyAgeMs\":%lu,"
+           "\"mode\":\"%s\",\"ip\":\"%s\",\"wifi\":\"%s\"}",
+           linkUp() ? "true" : "false",
+           static_cast<unsigned int>(state.program),
+           static_cast<unsigned int>(state.verb),
+           static_cast<unsigned int>(state.noun), state.r1, state.r2,
+           state.r3, static_cast<unsigned int>(state.alarm),
+           state.flashVerbNoun ? "true" : "false",
+           static_cast<unsigned long>(state.lampMask),
+           static_cast<unsigned long>(state.missionSeconds),
+           static_cast<unsigned long>(millis()), lastKeyName,
+           static_cast<unsigned long>(millis() - lastKeyTxMs), mode,
+           ip.c_str(), wifi.c_str());
+
+  webServer.sendHeader("Cache-Control", "no-store");
+  webServer.send(200, "application/json", payload);
+}
+
+bool keyFromWebArgument(dsky::Key* key) {
+  if (key == nullptr || !webServer.hasArg("name")) {
+    return false;
+  }
+
+  String name = webServer.arg("name");
+  name.trim();
+  name.toUpperCase();
+
+  if (name == F("ENTER")) {
+    name = F("ENTR");
+  } else if (name == F("CLEAR")) {
+    name = F("CLR");
+  } else if (name == F("PROCEED")) {
+    name = F("PRO");
+  } else if (name == F("RESET")) {
+    name = F("RSET");
+  } else if (name == F("KEY REL") || name == F("KEY_RELEASE")) {
+    name = F("KEYREL");
+  } else if (name == F("+")) {
+    name = F("PLUS");
+  } else if (name == F("-")) {
+    name = F("MINUS");
+  }
+
+  char keyName[16];
+  name.toCharArray(keyName, sizeof(keyName));
+  *key = dsky::parseKeyName(keyName);
+  return *key != dsky::Key::None;
+}
+
+void handleApiKey() {
+  dsky::Key key = dsky::Key::None;
+  if (!keyFromWebArgument(&key)) {
+    webServer.send(400, "text/plain", "Missing or invalid key name");
+    return;
+  }
+
+  sendKey(key);
+  webServer.send(200, "text/plain", "OK");
+}
+
+void handleApiRaw() {
+  String line;
+  if (webServer.hasArg("line")) {
+    line = webServer.arg("line");
+  } else {
+    line = webServer.arg("plain");
+  }
+
+  line.trim();
+  if (line.length() == 0 || line.length() >= dsky::kLineBufferSize) {
+    webServer.send(400, "text/plain", "Missing or too-long raw command");
+    return;
+  }
+
+  coreSerial.println(line);
+  Serial.print(F("WEB->ESP32 "));
+  Serial.println(line);
+  webServer.send(200, "text/plain", "OK");
+}
+
+void handleNotFound() {
+  webServer.send(404, "text/plain", "Not found");
+}
+
+void setupWebServer() {
+  webServer.on("/", HTTP_GET, handleRoot);
+  webServer.on("/api/state", HTTP_GET, handleApiState);
+  webServer.on("/api/key", HTTP_GET, handleApiKey);
+  webServer.on("/api/key", HTTP_POST, handleApiKey);
+  webServer.on("/api/raw", HTTP_GET, handleApiRaw);
+  webServer.on("/api/raw", HTTP_POST, handleApiRaw);
+  webServer.on("/favicon.ico", HTTP_GET,
+               []() { webServer.send(204, "text/plain", ""); });
+  webServer.onNotFound(handleNotFound);
+  webServer.begin();
+}
+
+void setupWiFi() {
+  WiFi.persistent(false);
+  WiFi.hostname(kHostname);
+
+  if (strlen(DSKY_WIFI_SSID) > 0) {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(DSKY_WIFI_SSID, DSKY_WIFI_PASSWORD);
+
+    Serial.print(F("Connecting to Wi-Fi SSID "));
+    Serial.println(DSKY_WIFI_SSID);
+
+    const unsigned long startMs = millis();
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - startMs < kWifiConnectTimeoutMs) {
+      setStatusLed((millis() / 150UL) % 2UL == 0);
+      delay(50);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiApMode = false;
+      Serial.print(F("Web DSKY ready at http://"));
+      Serial.println(WiFi.localIP());
+
+      if (MDNS.begin(kHostname)) {
+        mdnsActive = true;
+        Serial.print(F("mDNS ready at http://"));
+        Serial.print(kHostname);
+        Serial.println(F(".local"));
+      }
+
+      return;
+    }
+
+    Serial.println(F("Wi-Fi station failed. Starting fallback AP."));
+  }
+
+  wifiApMode = true;
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(DSKY_AP_SSID, DSKY_AP_PASSWORD);
+  Serial.print(F("Fallback AP SSID: "));
+  Serial.println(DSKY_AP_SSID);
+  Serial.print(F("Fallback AP password: "));
+  Serial.println(DSKY_AP_PASSWORD);
+  Serial.print(F("Web DSKY ready at http://"));
+  Serial.println(WiFi.softAPIP());
+}
+
 void handleCoreLine(char* line) {
   dsky::State parsed;
   dsky::initState(&parsed);
@@ -131,6 +333,8 @@ void handleUsbLine(char* line) {
   if (strcmp(line, "HELP") == 0) {
     Serial.println(F("Commands: KEY,<name> or shortcuts V N 0..9 E C P R"));
     Serial.println(F("Examples: V then 3 then 7, N then 3 then 6"));
+    Serial.print(F("Web DSKY: http://"));
+    Serial.println(webIpText());
     return;
   }
 
@@ -225,10 +429,17 @@ void setup() {
 
   delay(250);
   Serial.println(F("ESP8266 DSKY slave ready."));
+  setupWiFi();
+  setupWebServer();
   Serial.println(F("Type HELP for key commands."));
 }
 
 void loop() {
+  webServer.handleClient();
+  if (mdnsActive) {
+    MDNS.update();
+  }
+
   pollCoreSerial();
   pollUsbSerial();
   updateStatusLed();

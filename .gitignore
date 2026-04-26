@@ -1,2 +1,3 @@
 yaYUL.exe
 node_modules
+embedded/esp8266_dsky_slave/wifi_config.h

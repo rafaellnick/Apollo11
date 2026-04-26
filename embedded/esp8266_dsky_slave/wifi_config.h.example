@@ -1,0 +1,9 @@
+#pragma once
+
+// Local Wi-Fi station mode. Keep the real wifi_config.h out of git.
+#define DSKY_WIFI_SSID "YourWiFiName"
+#define DSKY_WIFI_PASSWORD "YourWiFiPassword"
+
+// Fallback access point used when DSKY_WIFI_SSID is empty or unavailable.
+#define DSKY_AP_SSID "AGC-DSKY"
+#define DSKY_AP_PASSWORD "apollo11"

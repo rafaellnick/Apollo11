@@ -24,7 +24,7 @@ What is implemented now:
 - a reusable `agc::Core` with 15-bit words, erasable/fixed memory, register aliases, and a starter instruction loop
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
-- an `ESP8266` DSKY slave for the first bench test
+- an `ESP8266` DSKY slave with a Wi-Fi browser interface for the first bench test
 - a `Mega` starter that scans buttons, drives lamps, and mirrors state to an LCD
 
 The ESP32 core currently runs a tiny AGC bring-up program that increments an erasable counter. The next layer is loading a real assembled rope image.
@@ -34,7 +34,9 @@ The ESP32 core currently runs a tiny AGC bring-up program that increments an era
 - `shared/agc_core.h`: first AGC CPU/memory layer
 - `shared/dsky_protocol.h`: protocol, key definitions, lamp bits, frame parsing
 - `esp32_agc_core/esp32_agc_core.ino`: ESP32 AGC core shell
-- `esp8266_dsky_slave/esp8266_dsky_slave.ino`: ESP8266 first-test DSKY slave
+- `esp8266_dsky_slave/esp8266_dsky_slave.ino`: ESP8266 DSKY slave, serial bridge, and web server
+- `esp8266_dsky_slave/web_dsky_page.h`: embedded browser DSKY page served by the ESP8266
+- `esp8266_dsky_slave/wifi_config.h.example`: optional local Wi-Fi config template
 - `mega_dsky_panel/mega_dsky_panel.ino`: Mega-side panel controller
 - `tests/agc_core_selftest.cpp`: desktop self-test for the core
 
@@ -53,6 +55,30 @@ The ESP32 uses hardware `Serial2`. The ESP8266 uses `SoftwareSerial` so its USB 
 Both boards are `3.3V`, so no level shifter is needed for this first test.
 
 The board-to-board link runs at `38400` baud. The PC USB serial monitor on each board runs at `115200` baud.
+
+## ESP8266 Web DSKY
+
+The ESP8266 remains the DSKY slave. It receives `STATE,...` frames from the ESP32 over the board-to-board UART and sends `KEY,...` commands back to the ESP32. It also serves a small web DSKY, so your phone or PC browser can press DSKY keys without a physical button matrix.
+
+By default, if no local Wi-Fi config exists, the ESP8266 starts its own access point:
+
+- SSID: `AGC-DSKY`
+- Password: `apollo11`
+- Browser URL: `http://192.168.4.1`
+
+To connect the ESP8266 to your existing Wi-Fi network, create `embedded/esp8266_dsky_slave/wifi_config.h` using this shape:
+
+```cpp
+#pragma once
+
+#define DSKY_WIFI_SSID "YourWiFiName"
+#define DSKY_WIFI_PASSWORD "YourWiFiPassword"
+
+#define DSKY_AP_SSID "AGC-DSKY"
+#define DSKY_AP_PASSWORD "apollo11"
+```
+
+The real `wifi_config.h` is ignored by git so your Wi-Fi password does not get committed. When station mode connects, the ESP8266 prints its browser URL on the USB serial monitor. It also tries to publish `http://agc-dsky.local` with mDNS.
 
 ## Joystick Wiring
 
@@ -120,7 +146,7 @@ Useful ESP32 USB commands:
 
 Open the ESP8266 USB serial monitor at `115200`.
 
-The ESP8266 prints DSKY state received from the ESP32 and forwards key commands back to the ESP32.
+The ESP8266 prints DSKY state received from the ESP32, forwards USB key commands back to the ESP32, and serves the browser DSKY over Wi-Fi.
 
 Useful shortcuts:
 
@@ -235,8 +261,9 @@ STATE,0,16,36,+00012,+00034,+00056,1202,1,96,1234
 2. Flash `esp32_agc_core` to the ESP32.
 3. Open USB serial on both boards at `115200`.
 4. Power both boards with a shared ground and connect the UART link.
-5. On the ESP8266 serial monitor, type `V`, `3`, `7`, `N`, `3`, `6`.
-6. Watch the ESP32 serial monitor for clean `AGC ...` status updates.
+5. Open the ESP8266 Web DSKY URL shown on its serial monitor.
+6. Press `VERB`, `3`, `7`, `NOUN`, `3`, `6` in the web page.
+7. Watch the ESP32 serial monitor for clean `AGC ...` status updates.
 
 ## What this is not yet
 
