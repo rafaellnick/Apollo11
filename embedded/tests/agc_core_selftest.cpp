@@ -18,6 +18,10 @@ int main() {
                                       agc::Core::fromInt(-1)) == 077777);
   assert(agc::Core::toInt(agc::Core::fromInt(-42)) == -42);
   assert(agc::Core::toInt(077777) == 0);
+  assert(agc::Core::interruptVectorAddress(
+             agc::Core::kInterruptDownrupt) == 04040);
+  assert(agc::Core::interruptVectorAddress(
+             agc::Core::kInterruptHandrupt) == 04050);
 
   core.writeChannel(0010, 012345);
   assert(core.readChannel(0010) == 012345);
@@ -34,6 +38,11 @@ int main() {
   mapCore.writeErasable(agc::Core::kRegEBANK, 000007);
   mapCore.writeErasable(03400, 001234);
   assert(mapCore.read(01400) == 001234);
+  mapCore.writeErasable(agc::Core::kRegFBANK, 000005);
+  assert(mapCore.readErasable(agc::Core::kRegBBANK) == 000057);
+  mapCore.writeErasable(agc::Core::kRegBBANK, 000032);
+  assert(mapCore.readErasable(agc::Core::kRegEBANK) == 000002);
+  assert(mapCore.readErasable(agc::Core::kRegFBANK) == 000003);
   mapCore.writeErasable(agc::Core::kRegFBANK, 000005);
   mapCore.writeFixedBank(05, 0, 056000);
   assert(mapCore.read(02000) == 056000);
@@ -62,6 +71,25 @@ int main() {
   core.writeErasable(agc::Core::kRegEDOP, 077777);
   assert(core.readErasable(agc::Core::kRegEDOP) == 000177);
   assert(core.readErasable(agc::Core::kRegEDOP) == 000000);
+
+  agc::Core counterCore;
+  counterCore.writeErasable(agc::Core::kRegTIME3, 037777);
+  assert(counterCore.counterPinc(agc::Core::kRegTIME3,
+                                 agc::Core::kInterruptT3Rupt));
+  assert(counterCore.readErasable(agc::Core::kRegTIME3) == 0);
+  assert((counterCore.pendingInterruptMask() &
+          (1U << agc::Core::kInterruptT3Rupt)) != 0);
+  counterCore.writeErasable(agc::Core::kRegTIME6, 000001);
+  assert(counterCore.counterDinc(agc::Core::kRegTIME6,
+                                 agc::Core::kInterruptT6Rupt));
+  assert((counterCore.pendingInterruptMask() &
+          (1U << agc::Core::kInterruptT6Rupt)) != 0);
+  counterCore.writeErasable(agc::Core::kRegINLINK, 040000);
+  assert(counterCore.counterShift(agc::Core::kRegINLINK, true,
+                                  agc::Core::kInterruptUprupt));
+  assert(counterCore.readErasable(agc::Core::kRegINLINK) == 000001);
+  assert((counterCore.pendingInterruptMask() &
+          (1U << agc::Core::kInterruptUprupt)) != 0);
 
   agc::Core decodeCore;
   decodeCore.writeErasable(00120, agc::Core::fromInt(42));

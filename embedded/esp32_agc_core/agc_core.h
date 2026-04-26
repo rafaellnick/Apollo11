@@ -34,7 +34,8 @@ class Core {
   static constexpr uint16_t kIoAddressMask = 00777;
   static constexpr uint16_t kQuarterMask = 06000;
   static constexpr uint16_t kIoChannels = 01000;
-  static constexpr uint8_t kInterruptCount = 8;
+  static constexpr uint8_t kInterruptCount = 10;
+  static constexpr uint8_t kNoInterrupt = 0xff;
   static constexpr uint8_t kRuptEntryMct = 2;
 
   static constexpr uint16_t kRegA = 00000;
@@ -57,6 +58,26 @@ class Core {
   static constexpr uint16_t kRegSR = 00021;
   static constexpr uint16_t kRegCYL = 00022;
   static constexpr uint16_t kRegEDOP = 00023;
+  static constexpr uint16_t kRegTIME2 = 00024;
+  static constexpr uint16_t kRegTIME1 = 00025;
+  static constexpr uint16_t kRegTIME3 = 00026;
+  static constexpr uint16_t kRegTIME4 = 00027;
+  static constexpr uint16_t kRegTIME5 = 00030;
+  static constexpr uint16_t kRegTIME6 = 00031;
+  static constexpr uint16_t kRegINLINK = 00032;
+  static constexpr uint16_t kRegRNRAD = 00033;
+  static constexpr uint16_t kRegOUTLINK = 00034;
+
+  static constexpr uint8_t kInterruptT6Rupt = 0;
+  static constexpr uint8_t kInterruptT5Rupt = 1;
+  static constexpr uint8_t kInterruptT3Rupt = 2;
+  static constexpr uint8_t kInterruptT4Rupt = 3;
+  static constexpr uint8_t kInterruptKeyrupt1 = 4;
+  static constexpr uint8_t kInterruptKeyrupt2 = 5;
+  static constexpr uint8_t kInterruptUprupt = 6;
+  static constexpr uint8_t kInterruptDownrupt = 7;
+  static constexpr uint8_t kInterruptRadarRupt = 8;
+  static constexpr uint8_t kInterruptHandrupt = 9;
 
   static constexpr uint16_t kInstructionRelint = 00003;
   static constexpr uint16_t kInstructionInhint = 00004;
@@ -80,6 +101,9 @@ class Core {
   static constexpr uint16_t kChannelOut1 = 0011;
   static constexpr uint16_t kChannelOut2 = 0012;
   static constexpr uint16_t kChannelOut3 = 0013;
+  static constexpr uint16_t kChannelCounterEnable = 0013;
+  static constexpr uint16_t kChannelDownlinkWord0 = 0034;
+  static constexpr uint16_t kChannelDownlinkWord1 = 0035;
 
   enum class RunState : uint8_t {
     Halted = 0,
@@ -261,6 +285,11 @@ class Core {
       return;
     }
 
+    if (isBankRegister(address)) {
+      writeBankRegister(address, value);
+      return;
+    }
+
     erasable_[address] = editValueForAddress(address, value);
   }
 
@@ -346,20 +375,84 @@ class Core {
 
   void requestInterrupt(uint8_t interruptNumber) {
     if (interruptNumber < kInterruptCount) {
-      pendingInterruptMask_ |= static_cast<uint8_t>(1U << interruptNumber);
+      pendingInterruptMask_ |= static_cast<uint16_t>(1U << interruptNumber);
     }
   }
 
   void clearInterrupt(uint8_t interruptNumber) {
     if (interruptNumber < kInterruptCount) {
       pendingInterruptMask_ &=
-          static_cast<uint8_t>(~static_cast<uint8_t>(1U << interruptNumber));
+          static_cast<uint16_t>(~static_cast<uint16_t>(1U << interruptNumber));
     }
   }
 
-  uint8_t pendingInterruptMask() const { return pendingInterruptMask_; }
+  uint16_t pendingInterruptMask() const { return pendingInterruptMask_; }
   bool interruptsEnabled() const { return interruptsEnabled_; }
   bool lastInstructionExtended() const { return lastExtended_; }
+
+  bool counterPinc(uint16_t address,
+                   uint8_t interruptNumber = kNoInterrupt) {
+    const uint16_t value = readErasable(address);
+    const bool overflow =
+        (value & kSignBit) == 0 && (value & kPositiveMask) == kPositiveMask;
+    writeErasable(address, overflow ? 0 : addOnesComplement(value, fromInt(1)));
+    if (overflow && interruptNumber < kInterruptCount) {
+      requestInterrupt(interruptNumber);
+    }
+    return overflow;
+  }
+
+  bool counterMinc(uint16_t address,
+                   uint8_t interruptNumber = kNoInterrupt) {
+    const uint16_t value = readErasable(address);
+    const bool underflow = value == kWordMask;
+    writeErasable(address, underflow ? kWordMask
+                                     : addOnesComplement(value,
+                                                         negate(fromInt(1))));
+    if (underflow && interruptNumber < kInterruptCount) {
+      requestInterrupt(interruptNumber);
+    }
+    return underflow;
+  }
+
+  bool counterDinc(uint16_t address,
+                   uint8_t interruptNumber = kNoInterrupt) {
+    const uint16_t value = readErasable(address);
+    bool reachedZero = false;
+
+    if (value == 0 || value == kWordMask) {
+      reachedZero = true;
+    } else if ((value & kSignBit) != 0) {
+      writeErasable(address, addOnesComplement(value, fromInt(1)));
+      const uint16_t next = readErasable(address);
+      reachedZero = next == 0 || next == kWordMask;
+    } else {
+      writeErasable(address, addOnesComplement(value, negate(fromInt(1))));
+      const uint16_t next = readErasable(address);
+      reachedZero = next == 0 || next == kWordMask;
+    }
+
+    if (reachedZero && interruptNumber < kInterruptCount) {
+      requestInterrupt(interruptNumber);
+    }
+    return reachedZero;
+  }
+
+  bool counterShift(uint16_t address,
+                    bool oneBit,
+                    uint8_t interruptNumber = kNoInterrupt) {
+    const uint16_t value = readErasable(address);
+    const bool overflow = (value & kSignBit) != 0;
+    uint16_t next = static_cast<uint16_t>((value << 1) & kWordMask);
+    if (oneBit) {
+      next |= 1;
+    }
+    writeErasable(address, next);
+    if (overflow && interruptNumber < kInterruptCount) {
+      requestInterrupt(interruptNumber);
+    }
+    return overflow;
+  }
 
   uint16_t getA() const { return readErasable(kRegA); }
   void setA(uint16_t value) { writeErasable(kRegA, value); }
@@ -410,6 +503,12 @@ class Core {
     }
 
     return static_cast<uint16_t>(value) & kPositiveMask;
+  }
+
+  static uint16_t interruptVectorAddress(uint8_t interruptNumber) {
+    return interruptNumber < kInterruptCount
+               ? static_cast<uint16_t>(04004 + interruptNumber * 4U)
+               : kBootAddress;
   }
 
  private:
@@ -480,6 +579,33 @@ class Core {
     address &= (kErasableWords - 1);
     return address == kRegCYR || address == kRegSR ||
            address == kRegCYL || address == kRegEDOP;
+  }
+
+  static bool isBankRegister(uint16_t address) {
+    address &= (kErasableWords - 1);
+    return address == kRegEBANK || address == kRegFBANK ||
+           address == kRegBBANK;
+  }
+
+  void writeBankRegister(uint16_t address, uint16_t value) {
+    const uint16_t ebank =
+        address == kRegBBANK ? value & 07 : erasable_[kRegEBANK] & 07;
+    const uint16_t fbank =
+        address == kRegBBANK ? (value >> 3) & 077
+                             : erasable_[kRegFBANK] & 077;
+
+    uint16_t nextEbank = ebank;
+    uint16_t nextFbank = fbank;
+    if (address == kRegEBANK) {
+      nextEbank = value & 07;
+    } else if (address == kRegFBANK) {
+      nextFbank = value & 077;
+    }
+
+    erasable_[kRegEBANK] = nextEbank;
+    erasable_[kRegFBANK] = nextFbank;
+    erasable_[kRegBBANK] =
+        static_cast<uint16_t>(((nextFbank & 077) << 3) | (nextEbank & 07));
   }
 
   static uint16_t editValueForAddress(uint16_t address, uint16_t value) {
@@ -601,12 +727,12 @@ class Core {
   }
 
   uint8_t selectedErasableBank() const {
-    return static_cast<uint8_t>(readErasable(kRegEBANK) & 07);
+    return static_cast<uint8_t>(erasable_[kRegEBANK] & 07);
   }
 
   uint8_t selectedFixedBank() const {
     uint8_t bank =
-        static_cast<uint8_t>(readErasable(kRegFBANK) & 077);
+        static_cast<uint8_t>(erasable_[kRegFBANK] & 077);
     if ((channels_[0007] & 0100) != 0 && bank >= 030 && bank <= 033) {
       bank = static_cast<uint8_t>(bank + 010);
     }
@@ -1004,8 +1130,8 @@ class Core {
 
   void rewriteIfErasable(uint16_t address, uint16_t value) {
     address &= kAddressMask;
-    if (address < kErasableWords) {
-      writeErasable(address, value);
+    if (isErasableAddress(address)) {
+      writeErasable(resolveErasableIndex(address), value);
     }
   }
 
@@ -1038,7 +1164,8 @@ class Core {
         continue;
       }
 
-      pendingInterruptMask_ &= static_cast<uint8_t>(~(1U << i));
+      pendingInterruptMask_ &=
+          static_cast<uint16_t>(~static_cast<uint16_t>(1U << i));
       activeInterrupt_ = i;
       if (indexPending_) {
         interruptedInstruction =
@@ -1049,7 +1176,7 @@ class Core {
       writeErasable(kRegZRUPT, interruptedPc);
       writeErasable(kRegBRUPT, interruptedInstruction);
       interruptsInhibited_ = true;
-      setZ(static_cast<uint16_t>(04004 + i * 4));
+      setZ(interruptVectorAddress(i));
       return true;
     }
 
@@ -1114,7 +1241,7 @@ class Core {
   uint16_t forcedInstruction_ = 0;
   bool interruptsEnabled_ = true;
   bool interruptsInhibited_ = false;
-  uint8_t pendingInterruptMask_ = 0;
+  uint16_t pendingInterruptMask_ = 0;
   uint8_t activeInterrupt_ = 0;
   uint16_t lastInstruction_ = 0;
   uint16_t lastAddress_ = 0;

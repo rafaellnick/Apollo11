@@ -12,9 +12,9 @@ int main() {
   core.start();
   peripherals.reset(core);
 
-  assert(peripherals.enqueueKey(0123));
+  assert(peripherals.enqueueKey(0023));
   assert(peripherals.tick(core));
-  assert(core.readChannel(agc::Peripherals::kChannelKeyInput) == 0123);
+  assert(core.readChannel(agc::Peripherals::kChannelKeyInput) == 0063);
   assert(peripherals.keyQueueDepth() == 0);
   assert(peripherals.keyruptCount() == 1);
   assert((core.pendingInterruptMask() &
@@ -42,8 +42,9 @@ int main() {
   core.reset();
   core.start();
   peripherals.reset(core);
-  core.runFor(static_cast<uint16_t>(
-      agc::Peripherals::kDefaultDownlinkPeriodCycles));
+  while (core.cycles() < agc::Peripherals::kDefaultDownlinkPeriodCycles) {
+    assert(core.step());
+  }
   assert(peripherals.tick(core));
   assert(peripherals.downlinkQueueDepth() == 1);
   assert(peripherals.popDownlink(&word));
@@ -52,8 +53,19 @@ int main() {
   core.reset();
   core.start();
   peripherals.reset(core);
-  core.runFor(static_cast<uint16_t>(
-      agc::Peripherals::kDefaultDownruptPeriodCycles));
+  while (core.cycles() < agc::Peripherals::kDefaultTimerPeriodCycles) {
+    assert(core.step());
+  }
+  assert(peripherals.tick(core));
+  assert(peripherals.counterPulseCount() == 1);
+  assert(core.readErasable(agc::Core::kRegTIME1) == agc::Core::fromInt(1));
+
+  core.reset();
+  core.start();
+  peripherals.reset(core);
+  while (core.cycles() < agc::Peripherals::kDefaultDownruptPeriodCycles) {
+    assert(core.step());
+  }
   assert(peripherals.tick(core));
   assert(peripherals.downruptCount() == 1);
   assert((core.pendingInterruptMask() &

@@ -12,7 +12,7 @@ namespace agc {
 class Peripherals {
  public:
   static constexpr uint16_t kChannelCount = Core::kIoChannels;
-  static constexpr uint8_t kDownlinkChannelCount = 4;
+  static constexpr uint8_t kDownlinkChannelCount = 6;
   static constexpr uint8_t kDownlinkQueueSize = 32;
   static constexpr uint8_t kKeyQueueSize = 16;
 
@@ -20,11 +20,18 @@ class Peripherals {
   static constexpr uint16_t kChannelDownlink1 = Core::kChannelOut1;
   static constexpr uint16_t kChannelDownlink2 = Core::kChannelOut2;
   static constexpr uint16_t kChannelDownlink3 = Core::kChannelOut3;
+  static constexpr uint16_t kChannelDownlinkWord0 = Core::kChannelDownlinkWord0;
+  static constexpr uint16_t kChannelDownlinkWord1 = Core::kChannelDownlinkWord1;
   static constexpr uint16_t kChannelKeyInput = Core::kChannelKey;
 
-  static constexpr uint8_t kInterruptDownrupt = 2;
-  static constexpr uint8_t kInterruptKeyrupt = 3;
+  static constexpr uint8_t kInterruptDownrupt = Core::kInterruptDownrupt;
+  static constexpr uint8_t kInterruptKeyrupt = Core::kInterruptKeyrupt1;
 
+  static constexpr uint32_t kAgcMctPerSecond = 85333;
+  static constexpr uint32_t kDefaultTimerPeriodCycles =
+      kAgcMctPerSecond / 100;
+  static constexpr uint32_t kDefaultTime6PeriodCycles =
+      kAgcMctPerSecond / 1600;
   static constexpr uint32_t kDefaultDownlinkPeriodCycles = 1024;
   static constexpr uint32_t kDefaultDownruptPeriodCycles = 4096;
   static constexpr uint32_t kDefaultKeyPeriodCycles = 128;
@@ -38,11 +45,14 @@ class Peripherals {
     uint32_t downlinkPeriodCycles;
     uint32_t downruptPeriodCycles;
     uint32_t keyPeriodCycles;
+    uint32_t timerPeriodCycles;
+    uint32_t time6PeriodCycles;
     uint8_t downruptInterrupt;
     uint8_t keyruptInterrupt;
     bool captureChannelChanges;
     bool scheduleDownrupt;
     bool requestScheduledInterrupts;
+    bool scheduleCounters;
   };
 
   struct DownlinkWord {
@@ -64,11 +74,14 @@ class Peripherals {
     Config config = {kDefaultDownlinkPeriodCycles,
                      kDefaultDownruptPeriodCycles,
                      kDefaultKeyPeriodCycles,
+                     kDefaultTimerPeriodCycles,
+                     kDefaultTime6PeriodCycles,
                      kInterruptDownrupt,
                      kInterruptKeyrupt,
                      true,
                      true,
-                     false};
+                     false,
+                     true};
     return config;
   }
 
@@ -92,6 +105,8 @@ class Peripherals {
     nextDownlinkCycle_ = cycle + config_.downlinkPeriodCycles;
     nextDownruptCycle_ = cycle + config_.downruptPeriodCycles;
     nextKeyCycle_ = cycle;
+    nextTimerCycle_ = cycle + config_.timerPeriodCycles;
+    nextTime6Cycle_ = cycle + config_.time6PeriodCycles;
     downlinkHead_ = 0;
     downlinkCount_ = 0;
     keyHead_ = 0;
@@ -103,8 +118,12 @@ class Peripherals {
     keyDropped_ = 0;
     downruptCount_ = 0;
     keyruptCount_ = 0;
+    counterPulseCount_ = 0;
+    time6PulseCount_ = 0;
     lastDownruptCycle_ = 0;
     lastKeyCycle_ = 0;
+    lastCounterCycle_ = 0;
+    lastTime6Cycle_ = 0;
     lastKeyWord_ = 0;
     lastDownlinkWord_ = 0;
     lastDownlinkChannel_ = 0;
@@ -121,6 +140,10 @@ class Peripherals {
     bool changed = false;
 
     if (serviceKeyQueue(core, cycle)) {
+      changed = true;
+    }
+
+    if (config_.scheduleCounters && serviceCounters(core, cycle)) {
       changed = true;
     }
 
@@ -211,8 +234,12 @@ class Peripherals {
   uint32_t keyDropped() const { return keyDropped_; }
   uint32_t downruptCount() const { return downruptCount_; }
   uint32_t keyruptCount() const { return keyruptCount_; }
+  uint32_t counterPulseCount() const { return counterPulseCount_; }
+  uint32_t time6PulseCount() const { return time6PulseCount_; }
   uint32_t lastDownruptCycle() const { return lastDownruptCycle_; }
   uint32_t lastKeyCycle() const { return lastKeyCycle_; }
+  uint32_t lastCounterCycle() const { return lastCounterCycle_; }
+  uint32_t lastTime6Cycle() const { return lastTime6Cycle_; }
   uint16_t lastKeyWord() const { return lastKeyWord_; }
   uint16_t lastDownlinkWord() const { return lastDownlinkWord_; }
   uint16_t lastDownlinkChannel() const { return lastDownlinkChannel_; }
@@ -232,10 +259,26 @@ class Peripherals {
 
   static const char* interruptName(uint8_t interruptNumber) {
     switch (interruptNumber) {
+      case Core::kInterruptT6Rupt:
+        return "T6RUPT";
+      case Core::kInterruptT5Rupt:
+        return "T5RUPT";
+      case Core::kInterruptT3Rupt:
+        return "T3RUPT";
+      case Core::kInterruptT4Rupt:
+        return "T4RUPT";
+      case Core::kInterruptKeyrupt1:
+        return "KEYRUPT1";
+      case Core::kInterruptKeyrupt2:
+        return "KEYRUPT2";
+      case Core::kInterruptUprupt:
+        return "UPRUPT";
       case kInterruptDownrupt:
         return "DOWNRUPT";
-      case kInterruptKeyrupt:
-        return "KEYRUPT";
+      case Core::kInterruptRadarRupt:
+        return "RADAR";
+      case Core::kInterruptHandrupt:
+        return "HANDRUPT";
       default:
         return "IRQ";
     }
@@ -251,6 +294,12 @@ class Peripherals {
     }
     if (config.keyPeriodCycles == 0) {
       config.keyPeriodCycles = kDefaultKeyPeriodCycles;
+    }
+    if (config.timerPeriodCycles == 0) {
+      config.timerPeriodCycles = kDefaultTimerPeriodCycles;
+    }
+    if (config.time6PeriodCycles == 0) {
+      config.time6PeriodCycles = kDefaultTime6PeriodCycles;
     }
     if (config.downruptInterrupt >= Core::kInterruptCount) {
       config.downruptInterrupt = kInterruptDownrupt;
@@ -274,14 +323,20 @@ class Peripherals {
         return kChannelDownlink1;
       case 2:
         return kChannelDownlink2;
-      default:
+      case 3:
         return kChannelDownlink3;
+      case 4:
+        return kChannelDownlinkWord0;
+      default:
+        return kChannelDownlinkWord1;
     }
   }
 
   static bool isDownlinkChannel(uint16_t channel) {
     return channel == kChannelDownlink0 || channel == kChannelDownlink1 ||
-           channel == kChannelDownlink2 || channel == kChannelDownlink3;
+           channel == kChannelDownlink2 || channel == kChannelDownlink3 ||
+           channel == kChannelDownlinkWord0 ||
+           channel == kChannelDownlinkWord1;
   }
 
   void snapshotChannels(const Core& core) {
@@ -328,7 +383,8 @@ class Peripherals {
     keyHead_ = static_cast<uint8_t>((keyHead_ + 1) % kKeyQueueSize);
     keyCount_--;
 
-    writeChannel(core, kChannelKeyInput, keyWord);
+    writeChannel(core, kChannelKeyInput,
+                 static_cast<uint16_t>((keyWord & 037) | 00040));
     if (config_.requestScheduledInterrupts) {
       core.requestInterrupt(config_.keyruptInterrupt);
     }
@@ -337,6 +393,41 @@ class Peripherals {
     lastKeyWord_ = keyWord;
     nextKeyCycle_ = cycle + config_.keyPeriodCycles;
     return true;
+  }
+
+  bool serviceCounters(Core& core, uint32_t cycle) {
+    bool changed = false;
+
+    while (cycleReached(cycle, nextTimerCycle_)) {
+      if (core.counterPinc(Core::kRegTIME1)) {
+        core.counterPinc(Core::kRegTIME2);
+      }
+      core.counterPinc(Core::kRegTIME3, Core::kInterruptT3Rupt);
+      core.counterPinc(Core::kRegTIME4, Core::kInterruptT4Rupt);
+      core.counterPinc(Core::kRegTIME5, Core::kInterruptT5Rupt);
+      counterPulseCount_++;
+      lastCounterCycle_ = nextTimerCycle_;
+      nextTimerCycle_ += config_.timerPeriodCycles;
+      changed = true;
+    }
+
+    while (cycleReached(cycle, nextTime6Cycle_)) {
+      if ((core.readChannel(Core::kChannelCounterEnable) & Core::kSignBit) !=
+          0) {
+        if (core.counterDinc(Core::kRegTIME6, Core::kInterruptT6Rupt)) {
+          core.writeChannel(Core::kChannelCounterEnable,
+                            static_cast<uint16_t>(
+                                core.readChannel(Core::kChannelCounterEnable) &
+                                (Core::kWordMask ^ Core::kSignBit)));
+        }
+        time6PulseCount_++;
+        lastTime6Cycle_ = nextTime6Cycle_;
+        changed = true;
+      }
+      nextTime6Cycle_ += config_.time6PeriodCycles;
+    }
+
+    return changed;
   }
 
   void pushDownlink(uint16_t channel, uint16_t word, uint32_t cycle,
@@ -371,6 +462,8 @@ class Peripherals {
   uint32_t nextDownlinkCycle_ = 0;
   uint32_t nextDownruptCycle_ = 0;
   uint32_t nextKeyCycle_ = 0;
+  uint32_t nextTimerCycle_ = 0;
+  uint32_t nextTime6Cycle_ = 0;
   uint8_t downlinkHead_ = 0;
   uint8_t downlinkCount_ = 0;
   uint8_t keyHead_ = 0;
@@ -382,8 +475,12 @@ class Peripherals {
   uint32_t keyDropped_ = 0;
   uint32_t downruptCount_ = 0;
   uint32_t keyruptCount_ = 0;
+  uint32_t counterPulseCount_ = 0;
+  uint32_t time6PulseCount_ = 0;
   uint32_t lastDownruptCycle_ = 0;
   uint32_t lastKeyCycle_ = 0;
+  uint32_t lastCounterCycle_ = 0;
+  uint32_t lastTime6Cycle_ = 0;
   uint16_t lastKeyWord_ = 0;
   uint16_t lastDownlinkWord_ = 0;
   uint16_t lastDownlinkChannel_ = 0;

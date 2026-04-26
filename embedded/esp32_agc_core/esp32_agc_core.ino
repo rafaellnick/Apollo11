@@ -1163,6 +1163,14 @@ void emitPeripheralStatus(Stream& port) {
   port.print(agcPeripherals.downruptCount());
   port.print('@');
   port.print(agcPeripherals.lastDownruptCycle());
+  port.print(F(" CTR="));
+  port.print(agcPeripherals.counterPulseCount());
+  port.print('@');
+  port.print(agcPeripherals.lastCounterCycle());
+  port.print(F(" T6="));
+  port.print(agcPeripherals.time6PulseCount());
+  port.print('@');
+  port.print(agcPeripherals.lastTime6Cycle());
   port.print(F(" KEYQ="));
   port.print(static_cast<unsigned int>(agcPeripherals.keyQueueDepth()));
   port.print(F(" KEYDROP="));
@@ -1387,7 +1395,7 @@ void handleConsoleCommand(char* line) {
     Serial.println(F("  PERIPH PERIPH,RESET PERIPH,IRQON PERIPH,IRQOFF"));
     Serial.println(F("  DOWNLINK UPKEY,<name|octal>"));
     Serial.println(F("  ROPE,INFO ROPE,LOAD"));
-    Serial.println(F("  CHAN,<octal> CHAN,<octal>,<octal> IRQ,<0-7>"));
+    Serial.println(F("  CHAN,<octal> CHAN,<octal>,<octal> IRQ,<0-9>"));
     Serial.println(F("  PINBALL,<noun> PINBALL,LIST"));
     Serial.println(F("  PEEK,<octal-address>"));
     Serial.println(F("  POKE,<octal-address>,<octal-word>"));

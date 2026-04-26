@@ -28,8 +28,8 @@ What is implemented now:
 - read/write editing behavior for `CYR`, `SR`, `CYL`, and `EDOP`
 - 9-bit AGC I/O channels, including the `L`/`Q` channel aliases and `SUPERBNK` bank-selection bit
 - MCT-based instruction cycle accounting for core execution and scheduled peripheral timing
-- initial interrupt, `DOWNRUPT`, keyrupt, uplink, and downlink plumbing in the AGC core
-- a deterministic peripheral layer for keyrupt/uplink, downrupt, and downlink channel monitoring
+- Block II interrupt-vector mapping for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
+- timer/counter pulses for `TIME1..TIME6`, uplink shift counters, `DOWNRUPT`, keyrupt, and downlink channel monitoring
 - physics-inspired mission telemetry helpers for ascent, coast, orbit, descent, and reentry
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
@@ -54,7 +54,7 @@ The ESP32 core currently runs a tiny AGC bring-up program that increments an era
 - `LAUNCH_SIMULATION_MANUAL.md`: launch simulation operating manual
 - `ROPE_BUILD.md`: rope conversion and loading path
 - `tools/rope_to_header.py`: converts rope word dumps into an ESP32 header
-- `tools/build_rope_image.ps1`: validates `Comanche055`/`Luminary099`, runs `yaYUL` when available, and converts `MAIN.agc.bin`
+- `tools/build_rope_image.ps1`: validates `Comanche055`/`Luminary099`, runs `yaYUL` when available, converts `MAIN.agc.bin`, and writes a rope manifest
 - `tools/run_agc_trace_validation.ps1`: builds and runs the desktop AGC trace harness
 - `tools/compare_agc_trace.ps1`: compares embedded-core trace CSVs against normalized yaAGC/VirtualAGC traces
 - `shared/pinball_nouns.h`: first real PINBALL noun reference map
@@ -183,6 +183,8 @@ The ESP32 automatically prints:
 
 The `CYC` field is now the core's MCT-style cycle counter, not just an instruction counter.
 
+After a real yaYUL build, `ROPE,LOAD` loads the generated `rope_image.h`; check `embedded/esp32_agc_core/rope_image.manifest.txt` for the program name, bank count, word count, and SHA-256 hashes.
+
 By default, the PC USB serial uses clean output only. The DSKY UART still receives raw `STATE,...` frames.
 
 The peripheral layer counts scheduled `KEYRUPT`/`DOWNRUPT` events and downlink changes by default. Use `PERIPH,IRQON` only when you want those scheduled peripheral events to request AGC core interrupts; the default keeps the bring-up loop stable while real interrupt handlers are still incomplete.
@@ -202,7 +204,7 @@ Useful ESP32 USB commands:
 - `UPKEY,<key-name-or-octal-word>`
 - `CHAN,<octal-channel>`
 - `CHAN,<octal-channel>,<octal-word>`
-- `IRQ,<0-7>`
+- `IRQ,<0-9>`
 - `PINBALL,<noun>`
 - `PINBALL,LIST`
 - `STATE`

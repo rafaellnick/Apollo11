@@ -173,8 +173,10 @@ Implementado neste bloco:
 - decoder Block II explicito para opcodes basicos, extracodes, quarter-code e peripheral-code
 - comportamento de leitura/escrita dos registradores de edicao `CYR`, `SR`, `CYL` e `EDOP`
 - canais AGC de 9 bits, incluindo aliases `L`/`Q` e bit `SUPERBNK`
-- contagem de ciclos em MCT para aproximar timing de instrucoes, `KEYRUPT` e `DOWNRUPT`
+- vetores Block II para `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR` e `HANDRUPT`
+- contagem de ciclos em MCT para aproximar timing de instrucoes, contadores `TIME1..TIME6`, `KEYRUPT` e `DOWNRUPT`
 - camada deterministica de perifericos para `KEYRUPT`, `DOWNRUPT`, uplink por teclado e fila de downlink
+- manifesto de rope real com hashes quando `yaYUL` gera `rope_image.h`
 - mapa inicial de nouns reais do `PINBALL` para consulta serial
 - modelo de telemetria de missao com helpers fisicos leves para subida, costa, orbita, descida e reentrada
 - extensao `PHASE,...` do protocolo para o Web DSKY exibir fase e nomes dos registradores

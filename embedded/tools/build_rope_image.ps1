@@ -8,6 +8,8 @@ param(
 
     [string]$OutputHeader = "",
 
+    [string]$OutputManifest = "",
+
     [string]$BuildDir = "",
 
     [string]$Python = "py",
@@ -119,6 +121,12 @@ if ($OutputHeader.Trim().Length -eq 0) {
     $OutputHeader = Join-Path $RepoRoot $OutputHeader
 }
 
+if ($OutputManifest.Trim().Length -eq 0) {
+    $OutputManifest = [System.IO.Path]::ChangeExtension($OutputHeader, ".manifest.txt")
+} elseif (-not [System.IO.Path]::IsPathRooted($OutputManifest)) {
+    $OutputManifest = Join-Path $RepoRoot $OutputManifest
+}
+
 $MainSource = Join-Path $SourceRoot "MAIN.agc"
 if (-not (Test-Path -LiteralPath $MainSource -PathType Leaf)) {
     throw "Expected MAIN.agc in $SourceRoot"
@@ -175,6 +183,11 @@ if ($AliasCopies.Count -gt 0) {
 $YaYul = Find-YaYul $YaYulPath
 if ($null -eq $YaYul.Path) {
     Write-YaYulNextCommand -ProgramName $Program -Checked $YaYul.Checked
+    if ($ValidateOnly) {
+        Write-Host ""
+        Write-Host "Validation only: source tree is valid, but yaYUL is not installed."
+        exit 0
+    }
     exit 2
 }
 
@@ -243,4 +256,25 @@ if ($PythonExit -ne 0) {
     throw "rope_to_header.py failed with exit code $PythonExit"
 }
 
+$WordCount = ([int64](Get-Item -LiteralPath $BinPath).Length) / 2
+$BankCount = [math]::Ceiling($WordCount / 1024)
+$BinHash = (Get-FileHash -LiteralPath $BinPath -Algorithm SHA256).Hash
+$HeaderHash = (Get-FileHash -LiteralPath $OutputHeader -Algorithm SHA256).Hash
+
+$Manifest = @(
+    "program=$Program",
+    "source=$SourceRoot",
+    "build_dir=$BuildDir",
+    "bin=$BinPath",
+    "output_header=$OutputHeader",
+    "word_count=$WordCount",
+    "bank_count=$BankCount",
+    "bin_sha256=$BinHash",
+    "header_sha256=$HeaderHash",
+    "generated_utc=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+)
+
+Set-Content -LiteralPath $OutputManifest -Value $Manifest -Encoding ASCII
+
 Write-Host "Rope header generated."
+Write-Host "Rope manifest generated: $OutputManifest"

@@ -31,6 +31,14 @@ powershell -ExecutionPolicy Bypass -File embedded\tools\build_rope_image.ps1 -Pr
 
 The helper copies the selected source tree to a temporary build directory before assembly, so `MAIN.agc.bin`, the symbol table, and the listing are not written into `Comanche055/` or `Luminary099/`. It also creates temporary include aliases from each file's `# Filename:` metadata; this handles the local `Luminary099` checkout where two filenames differ from the names included by `MAIN.agc`. When assembly succeeds, it converts yaYUL's `MAIN.agc.bin` into `embedded/esp32_agc_core/rope_image.h`.
 
+After conversion, the helper also writes `embedded/esp32_agc_core/rope_image.manifest.txt` with the selected program, source path, generated word count, bank count, and SHA-256 hashes of both `MAIN.agc.bin` and `rope_image.h`.
+
+To validate the source tree without requiring yaYUL yet:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\build_rope_image.ps1 -Program Comanche055 -ValidateOnly
+```
+
 The equivalent raw yaYUL command, if you are assembling manually from a source directory, is:
 
 ```powershell
@@ -105,7 +113,8 @@ The core now has:
 - Block II address decoding for unswitched/switched erasable, common fixed through `FBANK`, and fixed-fixed banks 2/3
 - explicit Block II instruction-map dispatch for basic opcodes, extracodes, quarter-code groups, and peripheral-code channel operations
 - I/O channel storage using the AGC 9-bit channel address, including `L`/`Q` channel aliases and `SUPERBNK` bank selection
-- interrupt request/pending plumbing with MCT-based instruction accounting for scheduled `KEYRUPT`/`DOWNRUPT` tests
+- Block II interrupt vectors for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
+- MCT-driven counter pulses for `TIME1..TIME6`, uplink shifting, keyrupt, and scheduled downrupt/downlink tests
 - read-side and write-side editing behavior for `CYR`, `SR`, `CYL`, and `EDOP`
 - expanded basic/extracode execution for `DAS`, `LXCH`, `INCR`, `ADS`, `DXCH`, `TS`, `XCH`, `BZF`, `BZMF`, `MSU`, `QXCH`, `AUG`, `DIM`, `DCA`, `DCS`, `SU`, `MP`, and the channel logic instructions
 
