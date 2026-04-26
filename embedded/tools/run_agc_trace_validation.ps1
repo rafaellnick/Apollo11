@@ -3,6 +3,10 @@ param(
   [string]$Output = "embedded\tests\agc_trace_runner.exe",
   [string]$CandidateTrace = "embedded\tests\agc_trace_candidate.csv",
   [string]$ReferenceTrace = "",
+  [ValidateSet("Synthetic", "Rope")]
+  [string]$Mode = "Synthetic",
+  [int]$Steps = 0,
+  [switch]$AllowRunnerFailure,
   [switch]$NoRun
 )
 
@@ -52,10 +56,12 @@ function Invoke-TraceBuild {
 
   if ((Split-Path -Leaf $CompilerPath) -ieq "cl.exe") {
     & $CompilerPath /nologo /std:c++17 /EHsc /I embedded\shared `
+      /I embedded\esp32_agc_core `
       /Fe:$OutputPath embedded\tests\agc_trace_runner.cpp
   } else {
     & $CompilerPath -std=c++17 -Wall -Wextra -pedantic `
-      -I embedded\shared embedded\tests\agc_trace_runner.cpp -o $OutputPath
+      -I embedded\shared -I embedded\esp32_agc_core `
+      embedded\tests\agc_trace_runner.cpp -o $OutputPath
   }
 
   if ($LASTEXITCODE -ne 0) {
@@ -77,9 +83,17 @@ if ($NoRun) {
   exit 0
 }
 
-& $Output > $CandidateTrace
-if ($LASTEXITCODE -ne 0) {
+$traceArgs = @("--mode", $Mode.ToLowerInvariant())
+if ($Steps -gt 0) {
+  $traceArgs += @("--steps", "$Steps")
+}
+
+& $Output @traceArgs > $CandidateTrace
+$runnerExit = $LASTEXITCODE
+if ($runnerExit -ne 0 -and -not $AllowRunnerFailure) {
   Write-Error "Trace runner failed with exit code $LASTEXITCODE."
+} elseif ($runnerExit -ne 0) {
+  Write-Warning "Trace runner exited with code $runnerExit after writing the partial trace."
 }
 
 Write-Host "Wrote candidate trace: $CandidateTrace"

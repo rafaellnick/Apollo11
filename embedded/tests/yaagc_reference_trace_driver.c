@@ -36,6 +36,12 @@ enum {
   kDefaultSteps = 18
 };
 
+typedef struct {
+  unsigned steps;
+  const char *rom_image;
+  int cpu_only;
+} TraceOptions;
+
 static uint16_t agc_negate(uint16_t word) {
   return (uint16_t)((~word) & kWordMask);
 }
@@ -111,6 +117,17 @@ static uint16_t read_word(const agc_t *state, uint16_t address) {
   }
 
   return (uint16_t)state->Fixed[3][sreg & 01777] & kWordMask;
+}
+
+static uint16_t executed_instruction(const agc_t *state, uint16_t pc) {
+  if (state->SubstituteInstruction) {
+    return (uint16_t)state->Erasable[0][RegBRUPT] & kWordMask;
+  }
+
+  return (uint16_t)OverflowCorrected(
+             AddSP16(SignExtend((int16_t)state->IndexValue),
+                     SignExtend((int16_t)read_word(state, pc)))) &
+         kWordMask;
 }
 
 static uint16_t pending_interrupt_mask(const agc_t *state) {
@@ -217,19 +234,44 @@ static int run_one_instruction(agc_t *state, uint64_t *mct) {
   return guard > 0 ? 0 : 2;
 }
 
-int main(int argc, char **argv) {
-  unsigned steps = kDefaultSteps;
-
+static int parse_options(int argc, char **argv, TraceOptions *options) {
+  options->steps = kDefaultSteps;
+  options->rom_image = NULL;
+  options->cpu_only = 0;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--steps") == 0 && i + 1 < argc) {
-      steps = (unsigned)strtoul(argv[++i], NULL, 10);
+      options->steps = (unsigned)strtoul(argv[++i], NULL, 10);
+    } else if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
+      options->rom_image = argv[++i];
+    } else if (strcmp(argv[i], "--cpu-only") == 0) {
+      options->cpu_only = 1;
+    } else if (strcmp(argv[i], "--help") == 0) {
+      return 1;
+    } else {
+      return 1;
     }
+  }
+
+  return options->steps > 0 ? 0 : 1;
+}
+
+static void print_usage(const char *argv0) {
+  fprintf(stderr,
+          "Usage: %s [--steps N] [--rom MAIN.agc.bin] [--cpu-only]\n",
+          argv0);
+}
+
+int main(int argc, char **argv) {
+  TraceOptions options;
+  if (parse_options(argc, argv, &options) != 0) {
+    print_usage(argv[0]);
+    return 2;
   }
 
   agc_t state;
   memset(&state, 0, sizeof(state));
 
-  const int init_result = agc_engine_init(&state, NULL, NULL, 0);
+  const int init_result = agc_engine_init(&state, options.rom_image, NULL, 0);
   if (init_result != 0) {
     fprintf(stderr, "agc_engine_init failed: %d\n", init_result);
     return init_result;
@@ -244,13 +286,20 @@ int main(int argc, char **argv) {
   state.PendFlag = 0;
   state.PendDelay = 0;
   state.Erasable[0][RegZ] = kBootAddress;
+  if (options.cpu_only) {
+    state.ScalerCounter = -1000000000;
+    state.ChannelRoutineCount = 1;
+    state.DownruptTimeValid = 0;
+  }
 
-  install_trace_program(&state);
+  if (options.rom_image == NULL) {
+    install_trace_program(&state);
+  }
 
   print_header();
-  for (unsigned step = 1; step <= steps; ++step) {
+  for (unsigned step = 1; step <= options.steps; ++step) {
     const uint16_t pc = (uint16_t)state.Erasable[0][RegZ] & kAddressMask;
-    const uint16_t instr = read_word(&state, pc);
+    const uint16_t instr = executed_instruction(&state, pc);
     const int extended = state.ExtraCode != 0;
     uint64_t mct = 0;
 

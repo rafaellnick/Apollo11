@@ -5,6 +5,8 @@ param(
   [string]$Output = "embedded\tests\agc_trace_reference_yaagc.csv",
   [string]$BuildDir = "",
   [int]$Steps = 18,
+  [string]$RomImage = "",
+  [switch]$CpuOnly,
   [switch]$NoRun
 )
 
@@ -99,6 +101,11 @@ if (-not [System.IO.Path]::IsPathRooted($Output)) {
 }
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Output) | Out-Null
 
+$romImagePath = ""
+if ($RomImage.Trim().Length -gt 0) {
+  $romImagePath = Resolve-LocalPath $RomImage
+}
+
 $libPath = Join-Path $yaAgcPath "libyaAGC.a"
 if (-not (Test-Path -LiteralPath $libPath -PathType Leaf)) {
   Write-Host "libyaAGC.a was not found; building yaAGC first."
@@ -135,7 +142,19 @@ if ($NoRun) {
   exit 0
 }
 
-$runCommand = "$(Quote-Bash (ConvertTo-MsysPath $exePath)) --steps $Steps > $(Quote-Bash (ConvertTo-MsysPath $Output))"
+$runParts = @(
+  (Quote-Bash (ConvertTo-MsysPath $exePath)),
+  "--steps",
+  "$Steps"
+)
+if ($romImagePath.Trim().Length -gt 0) {
+  $runParts += @("--rom", (Quote-Bash (ConvertTo-MsysPath $romImagePath)))
+}
+if ($CpuOnly) {
+  $runParts += "--cpu-only"
+}
+
+$runCommand = ($runParts -join " ") + " > " + (Quote-Bash (ConvertTo-MsysPath $Output))
 & $bashPath -lc $runCommand
 if ($LASTEXITCODE -ne 0) {
   throw "Reference trace driver failed with exit code $LASTEXITCODE."

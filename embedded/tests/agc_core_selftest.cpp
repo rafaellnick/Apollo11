@@ -33,20 +33,24 @@ int main() {
   core.writeChannel(01002, 000456);
   assert(core.readChannel(0002) == 000456);
   assert(core.readErasable(agc::Core::kRegQ) == 000456);
+  assert(core.readChannel(0030) == 037777);
+  assert(core.readChannel(0031) == 077777);
+  assert(core.readChannel(0032) == 077777);
+  assert(core.readChannel(0033) == 077777);
 
   agc::Core mapCore;
-  mapCore.writeErasable(agc::Core::kRegEBANK, 000007);
+  mapCore.writeErasable(agc::Core::kRegEBANK, 03400);
   mapCore.writeErasable(03400, 001234);
   assert(mapCore.read(01400) == 001234);
-  mapCore.writeErasable(agc::Core::kRegFBANK, 000005);
-  assert(mapCore.readErasable(agc::Core::kRegBBANK) == 000057);
-  mapCore.writeErasable(agc::Core::kRegBBANK, 000032);
-  assert(mapCore.readErasable(agc::Core::kRegEBANK) == 000002);
-  assert(mapCore.readErasable(agc::Core::kRegFBANK) == 000003);
-  mapCore.writeErasable(agc::Core::kRegFBANK, 000005);
+  mapCore.writeErasable(agc::Core::kRegFBANK, 012000);
+  assert(mapCore.readErasable(agc::Core::kRegBBANK) == 012007);
+  mapCore.writeErasable(agc::Core::kRegBBANK, 006002);
+  assert(mapCore.readErasable(agc::Core::kRegEBANK) == 001000);
+  assert(mapCore.readErasable(agc::Core::kRegFBANK) == 006000);
+  mapCore.writeErasable(agc::Core::kRegFBANK, 012000);
   mapCore.writeFixedBank(05, 0, 056000);
   assert(mapCore.read(02000) == 056000);
-  mapCore.writeErasable(agc::Core::kRegFBANK, 000030);
+  mapCore.writeErasable(agc::Core::kRegFBANK, 060000);
   mapCore.writeChannel(0007, 000100);
   mapCore.writeFixedBank(040, 0, 012345);
   assert(mapCore.read(02000) == 012345);
@@ -109,6 +113,15 @@ int main() {
   assert(tcfCore.getZ() == agc::Core::kBootAddress + 2);
   assert(tcfCore.lastInstructionMct() == 1);
 
+  agc::Core returnCore;
+  returnCore.writeErasable(agc::Core::kRegQ, 02550);
+  returnCore.writeFixed(agc::Core::kBootAddress,
+                        agc::Core::encodeBasic(0, agc::Core::kRegQ));
+  returnCore.start();
+  assert(returnCore.step());
+  assert(returnCore.getZ() == agc::Core::kRegQ);
+  assert(returnCore.readErasable(agc::Core::kRegQ) == 02550);
+
   agc::Core ccsCore;
   ccsCore.writeErasable(00120, agc::Core::fromInt(3));
   ccsCore.writeFixed(agc::Core::kBootAddress,
@@ -151,6 +164,24 @@ int main() {
   assert(ioCore.step());
   assert(ioCore.step());
   assert(ioCore.getA() == 001234);
+
+  agc::Core channel33Core;
+  channel33Core.setA(040000);
+  channel33Core.writeFixed(agc::Core::kBootAddress,
+                           agc::Core::kInstructionExtend);
+  channel33Core.writeFixed(agc::Core::kBootAddress + 1, 003033);
+  channel33Core.writeFixed(agc::Core::kBootAddress + 2,
+                           agc::Core::kInstructionExtend);
+  channel33Core.writeFixed(agc::Core::kBootAddress + 3, 002033);
+  channel33Core.start();
+  assert(channel33Core.step());
+  assert(channel33Core.step());
+  assert(channel33Core.getA() == 040000);
+  assert(channel33Core.readChannel(0033) == 077777);
+  channel33Core.setA(020000);
+  assert(channel33Core.step());
+  assert(channel33Core.step());
+  assert(channel33Core.getA() == 020000);
 
   agc::Core bzfCore;
   bzfCore.setA(0);

@@ -125,7 +125,7 @@ class Core {
   void reset() {
     memset(erasable_, 0, sizeof(erasable_));
     memset(fixed_, 0, sizeof(fixed_));
-    memset(channels_, 0, sizeof(channels_));
+    initializeChannels();
     runState_ = RunState::Halted;
     fault_ = Fault::None;
     cycles_ = 0;
@@ -335,6 +335,26 @@ class Core {
       setFault(Fault::BadRopeImage);
       return false;
     }
+
+    memset(erasable_, 0, sizeof(erasable_));
+    initializeChannels();
+    runState_ = RunState::Halted;
+    fault_ = Fault::None;
+    cycles_ = 0;
+    indexPending_ = false;
+    indexValue_ = 0;
+    extendPending_ = false;
+    forcedInstructionPending_ = false;
+    forcedInstruction_ = 0;
+    interruptsEnabled_ = true;
+    interruptsInhibited_ = false;
+    pendingInterruptMask_ = 0;
+    activeInterrupt_ = 0;
+    lastInstruction_ = 0;
+    lastAddress_ = 0;
+    lastOpcode_ = 0;
+    lastExtended_ = false;
+    lastInstructionMct_ = 0;
 
     memset(fixed_, 0, sizeof(fixed_));
     for (uint8_t bank = 0; bank < image.bankCount; ++bank) {
@@ -587,25 +607,30 @@ class Core {
            address == kRegBBANK;
   }
 
-  void writeBankRegister(uint16_t address, uint16_t value) {
-    const uint16_t ebank =
-        address == kRegBBANK ? value & 07 : erasable_[kRegEBANK] & 07;
-    const uint16_t fbank =
-        address == kRegBBANK ? (value >> 3) & 077
-                             : erasable_[kRegFBANK] & 077;
+  void initializeChannels() {
+    memset(channels_, 0, sizeof(channels_));
+    channels_[0030] = 037777;
+    channels_[0031] = kWordMask;
+    channels_[0032] = kWordMask;
+    channels_[0033] = kWordMask;
+  }
 
-    uint16_t nextEbank = ebank;
-    uint16_t nextFbank = fbank;
+  void writeBankRegister(uint16_t address, uint16_t value) {
     if (address == kRegEBANK) {
-      nextEbank = value & 07;
+      erasable_[kRegEBANK] = value & 03400;
     } else if (address == kRegFBANK) {
-      nextFbank = value & 077;
+      erasable_[kRegFBANK] = value & 076000;
+    } else {
+      erasable_[kRegBBANK] = value & 076007;
+      erasable_[kRegFBANK] = erasable_[kRegBBANK] & 076000;
+      erasable_[kRegEBANK] =
+          static_cast<uint16_t>((erasable_[kRegBBANK] & 07) << 8);
+      return;
     }
 
-    erasable_[kRegEBANK] = nextEbank;
-    erasable_[kRegFBANK] = nextFbank;
     erasable_[kRegBBANK] =
-        static_cast<uint16_t>(((nextFbank & 077) << 3) | (nextEbank & 07));
+        static_cast<uint16_t>((erasable_[kRegFBANK] & 076000) |
+                              ((erasable_[kRegEBANK] & 03400) >> 8));
   }
 
   static uint16_t editValueForAddress(uint16_t address, uint16_t value) {
@@ -727,12 +752,12 @@ class Core {
   }
 
   uint8_t selectedErasableBank() const {
-    return static_cast<uint8_t>(erasable_[kRegEBANK] & 07);
+    return static_cast<uint8_t>((erasable_[kRegEBANK] >> 8) & 07);
   }
 
   uint8_t selectedFixedBank() const {
     uint8_t bank =
-        static_cast<uint8_t>(erasable_[kRegFBANK] & 077);
+        static_cast<uint8_t>((erasable_[kRegFBANK] >> 10) & 037);
     if ((channels_[0007] & 0100) != 0 && bank >= 030 && bank <= 033) {
       bank = static_cast<uint8_t>(bank + 010);
     }
@@ -816,7 +841,9 @@ class Core {
   }
 
   void executeTc(uint16_t operand) {
-    writeErasable(kRegQ, getZ());
+    if (operand != kRegQ) {
+      writeErasable(kRegQ, getZ());
+    }
     setZ(operand);
   }
 
@@ -889,7 +916,7 @@ class Core {
         setA(channelValue);
         break;
       case 1:
-        writeChannel(channel, getA());
+        cpuWriteChannel(channel, getA());
         break;
       case 2:
         setA(static_cast<uint16_t>(getA() & channelValue));
@@ -897,7 +924,7 @@ class Core {
       case 3:
         result = static_cast<uint16_t>(getA() & channelValue);
         setA(result);
-        writeChannel(channel, result);
+        cpuWriteChannel(channel, result);
         break;
       case 4:
         setA(static_cast<uint16_t>((getA() | channelValue) & kWordMask));
@@ -905,7 +932,7 @@ class Core {
       case 5:
         result = static_cast<uint16_t>((getA() | channelValue) & kWordMask);
         setA(result);
-        writeChannel(channel, result);
+        cpuWriteChannel(channel, result);
         break;
       case 6:
         setA(static_cast<uint16_t>((getA() ^ channelValue) & kWordMask));
@@ -917,6 +944,21 @@ class Core {
         interruptsInhibited_ = true;
         break;
     }
+  }
+
+  void cpuWriteChannel(uint16_t channel, uint16_t value) {
+    channel &= kIoAddressMask;
+    value &= kWordMask;
+    if (channel == kRegL || channel == kRegQ) {
+      writeErasable(channel, value);
+      return;
+    }
+    if (channel == 0033) {
+      channels_[channel] = static_cast<uint16_t>(
+          (channels_[channel] | 076000) & kWordMask);
+      return;
+    }
+    writeChannel(channel, value);
   }
 
   void executeExtended(uint16_t instruction) {
@@ -984,7 +1026,7 @@ class Core {
 
   void executeBzf(uint16_t operand) {
     const bool branch = getA() == 0 || getA() == kWordMask;
-    lastInstructionMct_ = branch ? 1 : 2;
+    lastInstructionMct_ = 1;
     if (branch) {
       setZ(operand);
     }
@@ -994,7 +1036,7 @@ class Core {
     const uint16_t accumulator = getA();
     const bool branch = accumulator == 0 || accumulator == kWordMask ||
                         (accumulator & kSignBit) != 0;
-    lastInstructionMct_ = branch ? 1 : 2;
+    lastInstructionMct_ = 1;
     if (branch) {
       setZ(operand);
     }
