@@ -7,7 +7,7 @@ This manual explains how to run the launch simulation with:
 - PC or phone browser: DSKY buttons and displays
 - ESP32 USB serial: clean mission monitoring
 
-Important: this simulation is not yet the real Comanche rope flying a complete Saturn V ascent. It is a `Launch Monitor`, a mission-layer test mode that drives the DSKY through the major Apollo 11 ascent events while the embedded AGC core continues to run underneath.
+Important: this simulation is not yet the real Comanche rope flying a complete Saturn V ascent. It is a `Launch Monitor`, a mission-layer test mode that drives the DSKY through the major Apollo 11 ascent events while the embedded AGC core continues to run underneath. After parking orbit insertion, the launch monitor now chains into the automated Apollo 11 mission procedure sequencer.
 
 For the wider mission command table beyond launch, see `APOLLO11_MISSION_PROGRAM.md`.
 
@@ -158,6 +158,9 @@ LAUNCH,STOP
 LAUNCH,STATUS
 LAUNCH,SPEED,20
 LAUNCH,REALTIME
+APOLLO11,FULL
+MISSION,SPEED,10
+MISSION,REALTIME
 ```
 
 Meaning:
@@ -167,6 +170,9 @@ Meaning:
 - `LAUNCH,STATUS`: prints the current simulation state
 - `LAUNCH,SPEED,20`: sets the time scale from `1` to `100`
 - `LAUNCH,REALTIME`: sets the time scale to `x1`
+- `APOLLO11,FULL`: starts the complete launch-to-recovery sequence
+- `MISSION,SPEED,10`: sets the automated post-ascent procedure speed
+- `MISSION,REALTIME`: sets automated post-ascent procedure steps to `x1`
 
 ## Expected ESP32 Serial Output
 
@@ -182,6 +188,7 @@ Major events also appear as `LAUNCH` lines:
 LAUNCH T+00:00 LIFTOFF | P11 V16 N62 | R1 T+0 R2 ALT_KM 0 R3 VEL_MS 0 | x20
 LAUNCH T+01:23 MAX-Q | P11 V16 N62 | R1 T+83 R2 ALT_KM 14 R3 VEL_MS 520 | x20
 LAUNCH T+11:45 PARKING ORBIT | P11 V16 N62 | R1 T+705 R2 ALT_KM 185 R3 VEL_MS 7800 | x20 COMPLETE
+APOLLO11 AUTO N20 STEP 1/66 P11 V16 ORBIT INSERTION CHECK | GET_MIN 12 | ALT_KM 185 | VEL_MS 7800 | ALM 0000 | ELAPSED 0/12 | x10
 ```
 
 ## Simulated Timeline
@@ -229,10 +236,9 @@ During ascent:
 At completion:
 
 - USB serial prints `PARKING ORBIT`
-- the DSKY remains at `P11 V16 N62`
-- `R1` stays at `+00705`
-- `R2` stays near `+00185`
-- `R3` stays near `+07800`
+- the launch display briefly reaches `P11 V16 N62`
+- the automated mission sequencer starts at `N20`
+- the DSKY phase label advances through orbit checks, TLI, docking, coast, LOI, descent, landing, surface operations, ascent, rendezvous, TEI, entry, splashdown, and recovery
 
 ## Troubleshooting
 

@@ -32,6 +32,8 @@ constexpr uint8_t kJoystickCalibrationSamples = 32;
 constexpr int16_t kLaunchStartSecond = -10;
 constexpr int16_t kLaunchOrbitInsertionSecond = 705;
 constexpr uint8_t kLaunchDefaultTimeScale = 20;
+constexpr uint8_t kMissionDefaultTimeScale = 10;
+constexpr unsigned long kMissionStepMonitorMs = 1000;
 
 HardwareSerial panelSerial(2);
 agc::Core agcCore;
@@ -66,6 +68,12 @@ enum class UsbOutputMode : uint8_t {
 };
 
 enum class LaunchMode : uint8_t {
+  Off = 0,
+  Running,
+  Complete,
+};
+
+enum class MissionProcedureMode : uint8_t {
   Off = 0,
   Running,
   Complete,
@@ -111,6 +119,22 @@ struct MissionTelemetry {
   int16_t evaMin;
   int16_t sampleKg;
   int16_t mcc;
+};
+
+struct MissionProcedureStep {
+  uint8_t noun;
+  uint8_t program;
+  uint8_t verb;
+  const char* label;
+  const char* r1Label;
+  const char* r2Label;
+  const char* r3Label;
+  int16_t getMin;
+  int16_t r2;
+  int16_t r3;
+  uint16_t alarm;
+  uint32_t lampMask;
+  uint16_t durationSec;
 };
 
 constexpr LaunchEvent kLaunchEvents[] = {
@@ -185,9 +209,217 @@ constexpr MissionScenario kMissionScenarios[] = {
      48, 0, dsky::kLampProg | dsky::kLampKeyRel},
 };
 
+constexpr MissionProcedureStep kMissionProcedureSteps[] = {
+    {20, 11, 16, "ORBIT INSERTION CHECK", "GET_MIN", "ALT_KM", "VEL_MS",
+     12, 185, 7800, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {20, 11, 16, "S-IVB COAST CONFIG", "GET_MIN", "ALT_KM", "VEL_MS", 45,
+     185, 7800, 0, dsky::kLampProg | dsky::kLampUplinkActy, 12},
+    {20, 52, 16, "P52 PLATFORM ALIGN", "GET_MIN", "ALT_KM", "VEL_MS", 88,
+     185, 7800, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {20, 30, 16, "TLI PAD LOADED", "GET_MIN", "ALT_KM", "VEL_MS", 130,
+     185, 7800, 0, dsky::kLampProg | dsky::kLampUplinkActy, 12},
+
+    {21, 15, 16, "P15 TLI ENABLE", "GET_MIN", "BURN_SEC", "DV_MPS", 164,
+     348, 3200, 0, dsky::kLampProg | dsky::kLampUplinkActy, 10},
+    {21, 15, 16, "S-IVB IGNITION", "GET_MIN", "BURN_SEC", "DV_MPS", 166,
+     348, 3200, 0, dsky::kLampProg | dsky::kLampCompActy, 10},
+    {21, 15, 16, "TLI BURN MONITOR", "GET_MIN", "BURN_SEC", "DV_MPS", 169,
+     210, 2300, 0, dsky::kLampProg | dsky::kLampTracker, 14},
+    {21, 15, 16, "TLI CUTOFF CONFIRM", "GET_MIN", "BURN_SEC", "DV_MPS",
+     172, 0, 3200, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+
+    {22, 17, 16, "CSM SEP FROM S-IVB", "GET_MIN", "RANGE_M", "DOCKED",
+     182, 20, 0, 0, dsky::kLampProg | dsky::kLampCompActy, 10},
+    {22, 17, 16, "PITCHAROUND", "GET_MIN", "RANGE_M", "DOCKED", 186, 35,
+     0, 0, dsky::kLampProg | dsky::kLampTracker, 10},
+    {22, 17, 16, "DOCKING PROBE CAPTURE", "GET_MIN", "RANGE_M", "DOCKED",
+     190, 3, 1, 0, dsky::kLampProg | dsky::kLampCompActy, 12},
+    {22, 17, 16, "LM EXTRACTION", "GET_MIN", "RANGE_M", "DOCKED", 198, 30,
+     1, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+
+    {23, 23, 16, "P23 NAVIGATION", "GET_MIN", "DIST_KKM", "MCC", 300, 40,
+     1, 0, dsky::kLampTracker, 12},
+    {23, 0, 16, "PASSIVE THERMAL CTRL", "GET_MIN", "DIST_KKM", "MCC", 720,
+     120, 2, 0, dsky::kLampTracker, 12},
+    {23, 23, 16, "MIDCOURSE CORRECTION", "GET_MIN", "DIST_KKM", "MCC",
+     1500, 240, 2, 0, dsky::kLampProg | dsky::kLampUplinkActy, 12},
+    {23, 0, 16, "LM TUNNEL CHECK", "GET_MIN", "DIST_KKM", "MCC", 2700,
+     330, 3, 0, dsky::kLampTracker, 12},
+    {23, 23, 16, "LUNAR APPROACH UPDATE", "GET_MIN", "DIST_KKM", "MCC",
+     4300, 380, 0, 0, dsky::kLampProg | dsky::kLampUplinkActy, 12},
+
+    {24, 30, 16, "LOI PAD LOADED", "GET_MIN", "BURN_SEC", "DV_MPS", 4460,
+     357, 900, 0, dsky::kLampProg | dsky::kLampUplinkActy, 10},
+    {24, 40, 16, "SPS LOI IGNITION", "GET_MIN", "BURN_SEC", "DV_MPS", 4470,
+     357, 900, 0, dsky::kLampProg | dsky::kLampCompActy, 12},
+    {24, 40, 16, "LOI BURN MONITOR", "GET_MIN", "BURN_SEC", "DV_MPS", 4474,
+     180, 450, 0, dsky::kLampProg | dsky::kLampTracker, 14},
+    {24, 40, 16, "LUNAR ORBIT CONFIRM", "GET_MIN", "BURN_SEC", "DV_MPS",
+     4478, 0, 900, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+
+    {25, 20, 16, "LUNAR ORBIT TRACK", "GET_MIN", "ALT_KM", "ORBIT", 4520,
+     111, 1, 0, dsky::kLampTracker, 10},
+    {25, 52, 16, "LANDMARK ALIGN", "GET_MIN", "ALT_KM", "ORBIT", 4700, 111,
+     1, 0, dsky::kLampProg | dsky::kLampTracker, 10},
+    {25, 0, 16, "LM ACTIVATION", "GET_MIN", "ALT_KM", "ORBIT", 5750, 111, 1,
+     0, dsky::kLampProg | dsky::kLampCompActy, 12},
+    {25, 20, 16, "CSM LM UNDOCK", "GET_MIN", "ALT_KM", "ORBIT", 6000, 111,
+     1, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {25, 30, 16, "DOI DESCENT PREP", "GET_MIN", "ALT_KM", "ORBIT", 6090,
+     111, 1, 0, dsky::kLampProg | dsky::kLampUplinkActy, 10},
+
+    {26, 63, 16, "P63 BRAKING IGNITION", "GET_MIN", "ALT_KM", "VEL_MS",
+     6120, 15, 1680, 0, dsky::kLampProg | dsky::kLampCompActy, 12},
+    {26, 63, 16, "1202 EXEC RECYCLE", "ALARM", "RECYCLE", "STATUS", 6124, 1,
+     0, 1202, dsky::kLampOprErr | dsky::kLampKeyRel, 8},
+    {26, 63, 16, "BRAKING PHASE GOOD", "GET_MIN", "ALT_KM", "VEL_MS", 6130,
+     9, 900, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {26, 64, 16, "P64 APPROACH PHASE", "GET_MIN", "ALT_KM", "VEL_MS", 6144,
+     2, 250, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+
+    {27, 64, 16, "HIGH GATE", "GET_MIN", "ALT_M", "VEL_MS", 6148, 2200, 150,
+     0, dsky::kLampProg | dsky::kLampTracker, 10},
+    {27, 66, 16, "MANUAL REDESIGNATE", "GET_MIN", "ALT_M", "VEL_MS", 6150,
+     150, 50, 0, dsky::kLampProg | dsky::kLampKeyRel, 12},
+    {27, 66, 16, "CONTACT LIGHT", "GET_MIN", "ALT_M", "VEL_MS", 6152, 0, 0,
+     0, dsky::kLampProg | dsky::kLampCompActy, 8},
+    {27, 68, 16, "ENGINE STOP", "GET_MIN", "ALT_M", "VEL_MS", 6153, 0, 0, 0,
+     dsky::kLampProg | dsky::kLampKeyRel, 8},
+
+    {28, 68, 16, "POST LANDING CHECK", "GET_MIN", "ALT_M", "LANDED", 6155,
+     0, 1, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {28, 0, 16, "STAY NO-STAY REPORT", "GET_MIN", "ALT_M", "LANDED", 6165,
+     0, 1, 0, dsky::kLampProg | dsky::kLampUplinkActy, 12},
+    {28, 0, 16, "LM SYSTEMS SAFE", "GET_MIN", "ALT_M", "LANDED", 6210, 0,
+     1, 0, dsky::kLampTracker, 12},
+
+    {29, 0, 16, "CABIN DEPRESS", "GET_MIN", "EVA_MIN", "SAMPLE_KG", 6530, 0,
+     0, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+    {29, 0, 16, "HATCH OPEN", "GET_MIN", "EVA_MIN", "SAMPLE_KG", 6535, 5, 0,
+     0, dsky::kLampProg | dsky::kLampCompActy, 10},
+    {29, 0, 16, "FIRST STEP", "GET_MIN", "EVA_MIN", "SAMPLE_KG", 6540, 10,
+     0, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {29, 0, 16, "SAMPLE COLLECTION", "GET_MIN", "EVA_MIN", "SAMPLE_KG",
+     6640, 110, 22, 0, dsky::kLampTracker, 12},
+    {29, 0, 16, "EVA CLOSEOUT", "GET_MIN", "EVA_MIN", "SAMPLE_KG", 6691, 151,
+     22, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+
+    {30, 12, 16, "LM ASCENT ARM", "GET_MIN", "BURN_SEC", "VEL_MS", 7455, 435,
+     0, 0, dsky::kLampProg | dsky::kLampUplinkActy, 10},
+    {30, 12, 16, "ASCENT ENGINE START", "GET_MIN", "BURN_SEC", "VEL_MS",
+     7460, 435, 1800, 0, dsky::kLampProg | dsky::kLampCompActy, 12},
+    {30, 12, 16, "ASCENT BURN MONITOR", "GET_MIN", "BURN_SEC", "VEL_MS",
+     7464, 210, 1400, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {30, 12, 16, "ORBIT INSERTION", "GET_MIN", "BURN_SEC", "VEL_MS", 7468, 0,
+     1800, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+
+    {31, 20, 16, "CSI MANEUVER", "GET_MIN", "RANGE_KM", "DOCKED", 7510, 75,
+     0, 0, dsky::kLampProg | dsky::kLampTracker, 10},
+    {31, 20, 16, "CDH MANEUVER", "GET_MIN", "RANGE_KM", "DOCKED", 7530, 25,
+     0, 0, dsky::kLampProg | dsky::kLampUplinkActy, 10},
+    {31, 20, 16, "TPI FINAL APPROACH", "GET_MIN", "RANGE_KM", "DOCKED",
+     7550, 3, 0, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {31, 20, 16, "DOCKING CAPTURE", "GET_MIN", "RANGE_KM", "DOCKED", 7560,
+     0, 1, 0, dsky::kLampProg | dsky::kLampCompActy, 10},
+
+    {32, 30, 16, "TEI PAD LOADED", "GET_MIN", "BURN_SEC", "DV_MPS", 8070,
+     151, 1000, 0, dsky::kLampProg | dsky::kLampUplinkActy, 10},
+    {32, 40, 16, "SPS TEI IGNITION", "GET_MIN", "BURN_SEC", "DV_MPS", 8080,
+     151, 1000, 0, dsky::kLampProg | dsky::kLampCompActy, 12},
+    {32, 40, 16, "TEI BURN MONITOR", "GET_MIN", "BURN_SEC", "DV_MPS", 8082,
+     80, 520, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+    {32, 40, 16, "TEI CUTOFF CONFIRM", "GET_MIN", "BURN_SEC", "DV_MPS",
+     8083, 0, 1000, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+
+    {33, 23, 16, "TRANSEARTH NAV", "GET_MIN", "DIST_KKM", "MCC", 8200, 360,
+     1, 0, dsky::kLampTracker, 12},
+    {33, 0, 16, "CREW REST PERIOD", "GET_MIN", "DIST_KKM", "MCC", 9000, 250,
+     0, 0, dsky::kLampTracker, 12},
+    {33, 23, 16, "ENTRY PAD UPDATE", "GET_MIN", "DIST_KKM", "MCC", 11300,
+     40, 0, 0, dsky::kLampProg | dsky::kLampUplinkActy, 12},
+    {33, 0, 16, "CM SM SEPARATION", "GET_MIN", "DIST_KKM", "MCC", 11680, 5,
+     0, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+
+    {34, 61, 16, "ENTRY INTERFACE", "GET_MIN", "ALT_KM", "VEL_MS", 11700,
+     122, 11000, 0, dsky::kLampProg | dsky::kLampTemp, 10},
+    {34, 61, 16, "ROLL REVERSAL", "GET_MIN", "ALT_KM", "VEL_MS", 11720, 75,
+     7800, 0, dsky::kLampProg | dsky::kLampTracker, 10},
+    {34, 61, 16, "BLACKOUT", "GET_MIN", "ALT_KM", "VEL_MS", 11736, 38, 3500,
+     0, dsky::kLampProg | dsky::kLampTemp, 10},
+    {34, 67, 16, "DROGUE DEPLOY", "GET_MIN", "ALT_KM", "VEL_MS", 11766, 7,
+     180, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+
+    {35, 67, 16, "MAIN CHUTES", "GET_MIN", "ALT_KM", "RECOVERY", 11769, 3,
+     0, 0, dsky::kLampProg | dsky::kLampTracker, 8},
+    {35, 67, 16, "SPLASHDOWN", "GET_MIN", "ALT_KM", "RECOVERY", 11773, 0, 1,
+     0, dsky::kLampProg | dsky::kLampCompActy, 10},
+    {35, 67, 16, "RECOVERY BEACON", "GET_MIN", "ALT_KM", "RECOVERY", 11778,
+     0, 1, 0, dsky::kLampProg | dsky::kLampUplinkActy, 10},
+    {35, 67, 16, "CREW RECOVERED", "GET_MIN", "ALT_KM", "RECOVERY", 11790,
+     0, 1, 0, dsky::kLampProg | dsky::kLampTracker, 12},
+
+    {40, 70, 16, "MODE I TOWER ABORT", "GET_MIN", "MODE", "STATUS", 1, 1,
+     40, 0, dsky::kLampOprErr | dsky::kLampStby, 10},
+    {40, 70, 16, "LES PITCH CONTROL", "GET_MIN", "MODE", "STATUS", 2, 1,
+     40, 0, dsky::kLampOprErr | dsky::kLampTracker, 10},
+    {40, 70, 16, "ABORT SPLASHDOWN", "GET_MIN", "MODE", "STATUS", 10, 1,
+     1, 0, dsky::kLampOprErr | dsky::kLampKeyRel, 10},
+
+    {41, 37, 16, "ORBIT ABORT PAD", "GET_MIN", "DV_MPS", "STATUS", 180,
+     200, 41, 0, dsky::kLampOprErr | dsky::kLampUplinkActy, 10},
+    {41, 37, 16, "SPS DEORBIT BURN", "GET_MIN", "DV_MPS", "STATUS", 190,
+     200, 41, 0, dsky::kLampOprErr | dsky::kLampCompActy, 10},
+    {41, 67, 16, "SAFE ENTRY", "GET_MIN", "ALT_KM", "RECOVERY", 260, 0, 1,
+     0, dsky::kLampOprErr | dsky::kLampTracker, 10},
+
+    {42, 37, 16, "FREE RETURN SETUP", "GET_MIN", "MCC", "STATUS", 1000, 1,
+     42, 0, dsky::kLampOprErr | dsky::kLampTracker, 10},
+    {42, 37, 16, "MIDCOURSE ABORT", "GET_MIN", "MCC", "STATUS", 1400, 1,
+     42, 0, dsky::kLampOprErr | dsky::kLampUplinkActy, 10},
+    {42, 61, 16, "EARTH RETURN ENTRY", "GET_MIN", "ALT_KM", "VEL_MS", 11700,
+     122, 11000, 0, dsky::kLampOprErr | dsky::kLampTemp, 10},
+
+    {43, 71, 16, "P71 DESCENT ABORT", "GET_MIN", "ALT_KM", "STATUS", 6140,
+     3, 43, 0, dsky::kLampOprErr | dsky::kLampProg, 10},
+    {43, 12, 16, "APS ASCENT GUIDANCE", "GET_MIN", "BURN_SEC", "VEL_MS",
+     6143, 435, 1600, 0, dsky::kLampOprErr | dsky::kLampCompActy, 10},
+    {43, 20, 16, "RENDEZVOUS RECOVERY", "GET_MIN", "RANGE_KM", "DOCKED",
+     6200, 0, 1, 0, dsky::kLampOprErr | dsky::kLampTracker, 10},
+
+    {44, 63, 16, "1202 ALARM", "ALARM", "RECYCLE", "STATUS", 6124, 1, 0,
+     1202, dsky::kLampOprErr | dsky::kLampKeyRel, 8},
+    {44, 63, 16, "1202 RECOVERED", "GET_MIN", "ALT_KM", "VEL_MS", 6125, 12,
+     1200, 0, dsky::kLampProg | dsky::kLampTracker, 10},
+
+    {45, 63, 16, "1201 ALARM", "ALARM", "RECYCLE", "STATUS", 6125, 1, 0,
+     1201, dsky::kLampOprErr | dsky::kLampKeyRel, 8},
+    {45, 63, 16, "1201 RECOVERED", "GET_MIN", "ALT_KM", "VEL_MS", 6126, 11,
+     1100, 0, dsky::kLampProg | dsky::kLampTracker, 10},
+
+    {46, 0, 16, "UPLINK LOST", "GET_MIN", "UPLINK", "STATUS", 300, 0, 46, 0,
+     dsky::kLampOprErr, 10},
+    {46, 0, 16, "VOICE BACKUP NAV", "GET_MIN", "UPLINK", "STATUS", 305, 0,
+     46, 0, dsky::kLampOprErr | dsky::kLampTracker, 10},
+    {46, 0, 16, "UPLINK RESTORED", "GET_MIN", "UPLINK", "STATUS", 310, 1,
+     0, 0, dsky::kLampProg | dsky::kLampUplinkActy, 10},
+
+    {47, 52, 16, "P52 STAR SELECT", "GET_MIN", "STAR", "STATUS", 300, 1,
+     52, 0, dsky::kLampProg | dsky::kLampTracker, 10},
+    {47, 52, 16, "OPTICS MARKS", "GET_MIN", "STAR", "STATUS", 305, 2, 52,
+     0, dsky::kLampProg | dsky::kLampCompActy, 10},
+    {47, 52, 16, "IMU REALIGN DONE", "GET_MIN", "STAR", "STATUS", 310, 2,
+     0, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+
+    {48, 0, 16, "RHC MANUAL ATTITUDE", "GET_MIN", "RHC", "STATUS", 300, 99,
+     48, 0, dsky::kLampProg | dsky::kLampKeyRel, 10},
+    {48, 0, 16, "ATTITUDE HOLD", "GET_MIN", "RHC", "STATUS", 305, 0, 0, 0,
+     dsky::kLampProg | dsky::kLampTracker, 10},
+};
+
 EntryMode entryMode = EntryMode::Idle;
 UsbOutputMode usbOutputMode = UsbOutputMode::Clean;
 LaunchMode launchMode = LaunchMode::Off;
+MissionProcedureMode missionProcedureMode = MissionProcedureMode::Off;
 char pendingDigits[3] = {'0', '0', '\0'};
 uint8_t pendingCount = 0;
 uint32_t manualLampMask = 0;
@@ -200,8 +432,15 @@ int16_t launchVelocityMs = 0;
 uint8_t launchTimeScale = kLaunchDefaultTimeScale;
 int8_t lastLaunchEventIndex = -1;
 char launchPhase[24] = "IDLE";
+bool launchAutoChainMission = false;
 int8_t activeMissionScenarioIndex = -1;
 uint32_t missionScenarioLampMask = 0;
+uint8_t missionProcedureStepIndex = 0;
+bool missionProcedureAutoChain = false;
+uint8_t missionProcedureStartNoun = 0;
+uint8_t missionProcedureTimeScale = kMissionDefaultTimeScale;
+unsigned long missionProcedureStepStartMs = 0;
+unsigned long lastMissionProcedureMonitorMs = 0;
 
 struct JoystickState {
   int rawX = 0;
@@ -335,6 +574,19 @@ const MissionScenario* activeMissionScenario() {
   return &kMissionScenarios[activeMissionScenarioIndex];
 }
 
+const MissionProcedureStep* activeMissionProcedureStep() {
+  if (missionProcedureMode == MissionProcedureMode::Off) {
+    return nullptr;
+  }
+
+  if (missionProcedureStepIndex >=
+      sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0])) {
+    return nullptr;
+  }
+
+  return &kMissionProcedureSteps[missionProcedureStepIndex];
+}
+
 int8_t missionScenarioIndexForNoun(uint8_t noun) {
   for (uint8_t i = 0;
        i < sizeof(kMissionScenarios) / sizeof(kMissionScenarios[0]); ++i) {
@@ -346,7 +598,29 @@ int8_t missionScenarioIndexForNoun(uint8_t noun) {
   return -1;
 }
 
+int8_t missionProcedureStepIndexForNoun(uint8_t noun) {
+  for (uint8_t i = 0;
+       i < sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0]);
+       ++i) {
+    if (kMissionProcedureSteps[i].noun == noun) {
+      return static_cast<int8_t>(i);
+    }
+  }
+
+  return -1;
+}
+
+void clearMissionProcedure() {
+  missionProcedureMode = MissionProcedureMode::Off;
+  missionProcedureStepIndex = 0;
+  missionProcedureAutoChain = false;
+  missionProcedureStartNoun = 0;
+  missionProcedureStepStartMs = 0;
+  lastMissionProcedureMonitorMs = 0;
+}
+
 void clearMissionScenario() {
+  clearMissionProcedure();
   activeMissionScenarioIndex = -1;
   missionScenarioLampMask = 0;
 }
@@ -359,10 +633,56 @@ void setPhaseText(const char* label, const char* r1Label,
   dsky::copyField(phase.r3Label, sizeof(phase.r3Label), r3Label);
 }
 
-MissionTelemetry computeTelemetryModel(const MissionScenario& scenario) {
+uint32_t currentMissionStepElapsedSeconds() {
+  if (missionProcedureMode != MissionProcedureMode::Running ||
+      missionProcedureStepStartMs == 0) {
+    return 0;
+  }
+
+  const uint64_t elapsedMs = millis() - missionProcedureStepStartMs;
+  return static_cast<uint32_t>(
+      (elapsedMs * static_cast<uint64_t>(missionProcedureTimeScale)) /
+      1000ULL);
+}
+
+int16_t currentMissionProcedureGetMin() {
+  const MissionProcedureStep* step = activeMissionProcedureStep();
+  if (step == nullptr) {
+    return 0;
+  }
+
+  int16_t endGetMin = step->getMin;
+  const uint8_t nextIndex = static_cast<uint8_t>(missionProcedureStepIndex + 1);
+  if (missionProcedureMode == MissionProcedureMode::Running &&
+      nextIndex < sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0])) {
+    const MissionProcedureStep& next = kMissionProcedureSteps[nextIndex];
+    const bool nextBelongsToRun =
+        missionProcedureAutoChain
+            ? (next.noun >= 20 && next.noun <= 35)
+            : (next.noun == step->noun);
+    if (nextBelongsToRun) {
+      endGetMin = next.getMin;
+    }
+  }
+
+  if (endGetMin <= step->getMin || step->durationSec == 0) {
+    return step->getMin;
+  }
+
+  const int32_t t = mission_physics::progressPermille(
+      static_cast<int32_t>(currentMissionStepElapsedSeconds()), 0,
+      step->durationSec);
+  return static_cast<int16_t>(
+      mission_physics::lerpPermille(step->getMin, endGetMin, t));
+}
+
+MissionTelemetry computeTelemetryModel(uint8_t noun,
+                                       int16_t getMin,
+                                       int16_t fallbackR2,
+                                       int16_t fallbackR3) {
   MissionTelemetry telemetry = {};
   const mission_physics::MissionState physics =
-      mission_physics::computeMissionState(scenario.noun, scenario.r1);
+      mission_physics::computeMissionState(noun, getMin);
 
   telemetry.getMin = physics.getMin;
   telemetry.altitudeKm = physics.altitudeKm;
@@ -384,13 +704,23 @@ MissionTelemetry computeTelemetryModel(const MissionScenario& scenario) {
   telemetry.sampleKg = physics.sampleKg;
   telemetry.mcc = physics.mcc;
 
-  if (!mission_physics::isModeledMissionNoun(scenario.noun)) {
-    telemetry.status = scenario.r3;
-    telemetry.altitudeKm = scenario.r2;
-    telemetry.velocityMs = scenario.r3;
+  if (!mission_physics::isModeledMissionNoun(noun)) {
+    telemetry.status = fallbackR3;
+    telemetry.altitudeKm = fallbackR2;
+    telemetry.velocityMs = fallbackR3;
   }
 
   return telemetry;
+}
+
+MissionTelemetry computeTelemetryModel(const MissionScenario& scenario) {
+  return computeTelemetryModel(scenario.noun, scenario.r1, scenario.r2,
+                               scenario.r3);
+}
+
+MissionTelemetry computeTelemetryModel(const MissionProcedureStep& step) {
+  return computeTelemetryModel(step.noun, currentMissionProcedureGetMin(),
+                               step.r2, step.r3);
 }
 
 int16_t telemetryValueForLabel(const MissionTelemetry& telemetry,
@@ -515,6 +845,18 @@ void refreshDskyFromCore() {
                   agc::Core::fromInt(launchAltitudeKm));
     formatAgcWord(state.r3, sizeof(state.r3),
                   agc::Core::fromInt(launchVelocityMs));
+  } else if (activeMissionProcedureStep() != nullptr) {
+    const MissionProcedureStep* step = activeMissionProcedureStep();
+    const MissionTelemetry telemetry = computeTelemetryModel(*step);
+    formatAgcWord(state.r1, sizeof(state.r1),
+                  agc::Core::fromInt(telemetryValueForLabel(
+                      telemetry, step->r1Label, step->getMin)));
+    formatAgcWord(state.r2, sizeof(state.r2),
+                  agc::Core::fromInt(telemetryValueForLabel(
+                      telemetry, step->r2Label, step->r2)));
+    formatAgcWord(state.r3, sizeof(state.r3),
+                  agc::Core::fromInt(telemetryValueForLabel(
+                      telemetry, step->r3Label, step->r3)));
   } else if (activeMissionScenario() != nullptr) {
     const MissionScenario* scenario = activeMissionScenario();
     const MissionTelemetry telemetry = computeTelemetryModel(*scenario);
@@ -540,11 +882,14 @@ void refreshDskyFromCore() {
       abs(agc::Core::toInt(agcCore.readErasable(agc::Core::kPanelAlarm))) %
       10000);
   state.missionSeconds =
-      launchMode == LaunchMode::Off
-          ? (activeMissionScenario() == nullptr
-                 ? agcCore.cycles() / 1024UL
-                 : static_cast<uint32_t>(activeMissionScenario()->r1) * 60UL)
-          : static_cast<uint32_t>(launchSecond > 0 ? launchSecond : 0);
+      activeMissionProcedureStep() != nullptr
+          ? static_cast<uint32_t>(currentMissionProcedureGetMin()) * 60UL
+          : (launchMode == LaunchMode::Off
+                 ? (activeMissionScenario() == nullptr
+                        ? agcCore.cycles() / 1024UL
+                        : static_cast<uint32_t>(activeMissionScenario()->r1) *
+                              60UL)
+                 : static_cast<uint32_t>(launchSecond > 0 ? launchSecond : 0));
   syncLamps();
   stateDirty = true;
 }
@@ -692,6 +1037,7 @@ void emitLaunchStatus(Stream& port) {
 
 void clearLaunchState() {
   launchMode = LaunchMode::Off;
+  launchAutoChainMission = false;
   launchLampMask = 0;
   lastLaunchEventIndex = -1;
   dsky::copyField(launchPhase, sizeof(launchPhase), "IDLE");
@@ -712,7 +1058,100 @@ void configureMissionDisplay(const MissionScenario& scenario) {
                scenario.r3Label);
 }
 
+void configureMissionProcedureDisplay(const MissionProcedureStep& step) {
+  setCoreDisplayRegister(agc::Core::kPanelProgram, step.program);
+  setCoreDisplayRegister(agc::Core::kPanelVerb, step.verb);
+  setCoreDisplayRegister(agc::Core::kPanelNoun, step.noun);
+  agcCore.writeErasable(
+      agc::Core::kPanelAlarm,
+      agc::Core::fromInt(static_cast<int16_t>(step.alarm)));
+  state.flashVerbNoun = step.alarm != 0;
+  setPhaseText(step.label, step.r1Label, step.r2Label, step.r3Label);
+  missionScenarioLampMask = step.lampMask;
+  activeMissionScenarioIndex = missionScenarioIndexForNoun(step.noun);
+}
+
+uint8_t missionProcedureDisplayStepNumber() {
+  const int8_t startIndex =
+      missionProcedureStepIndexForNoun(missionProcedureStartNoun);
+  if (startIndex < 0 ||
+      missionProcedureStepIndex < static_cast<uint8_t>(startIndex)) {
+    return static_cast<uint8_t>(missionProcedureStepIndex + 1);
+  }
+
+  return static_cast<uint8_t>(missionProcedureStepIndex -
+                              static_cast<uint8_t>(startIndex) + 1);
+}
+
+uint8_t missionProcedureDisplayStepCount() {
+  const int8_t startIndex =
+      missionProcedureStepIndexForNoun(missionProcedureStartNoun);
+  if (startIndex < 0) {
+    return sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0]);
+  }
+
+  uint8_t count = 0;
+  for (uint8_t i = static_cast<uint8_t>(startIndex);
+       i < sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0]);
+       ++i) {
+    const bool belongsToRun =
+        missionProcedureAutoChain
+            ? (kMissionProcedureSteps[i].noun >= 20 &&
+               kMissionProcedureSteps[i].noun <= 35)
+            : (kMissionProcedureSteps[i].noun == missionProcedureStartNoun);
+    if (!belongsToRun) {
+      break;
+    }
+    ++count;
+  }
+
+  return count;
+}
+
 void emitMissionStatus(Stream& port) {
+  const MissionProcedureStep* step = activeMissionProcedureStep();
+  if (step != nullptr) {
+    const MissionTelemetry telemetry = computeTelemetryModel(*step);
+    port.print(F("APOLLO11 AUTO N"));
+    printTwoDigits(port, step->noun);
+    port.print(F(" STEP "));
+    port.print(static_cast<unsigned int>(missionProcedureDisplayStepNumber()));
+    port.print('/');
+    port.print(static_cast<unsigned int>(missionProcedureDisplayStepCount()));
+    port.print(F(" P"));
+    printTwoDigits(port, step->program);
+    port.print(F(" V"));
+    printTwoDigits(port, step->verb);
+    port.print(F(" "));
+    port.print(step->label);
+    port.print(F(" | "));
+    port.print(step->r1Label);
+    port.print(' ');
+    port.print(telemetryValueForLabel(telemetry, step->r1Label,
+                                      step->getMin));
+    port.print(F(" | "));
+    port.print(step->r2Label);
+    port.print(' ');
+    port.print(telemetryValueForLabel(telemetry, step->r2Label, step->r2));
+    port.print(F(" | "));
+    port.print(step->r3Label);
+    port.print(' ');
+    port.print(telemetryValueForLabel(telemetry, step->r3Label, step->r3));
+    port.print(F(" | ALM "));
+    printFourDigits(port, step->alarm);
+    port.print(F(" | ELAPSED "));
+    port.print(currentMissionStepElapsedSeconds());
+    port.print('/');
+    port.print(step->durationSec);
+    port.print(F(" | x"));
+    port.print(missionProcedureTimeScale);
+    if (missionProcedureMode == MissionProcedureMode::Complete) {
+      port.print(F(" COMPLETE"));
+    }
+    port.println();
+    return;
+  }
+
   const MissionScenario* scenario = activeMissionScenario();
   if (scenario == nullptr) {
     port.println(F("APOLLO11 IDLE"));
@@ -764,14 +1203,16 @@ void emitMissionStatus(Stream& port) {
 void printMissionCommandList(Stream& port) {
   port.println(F("Apollo 11 mission commands:"));
   port.println(F("  V37 N00 ENTR  STOP / P00"));
-  port.println(F("  V37 N11 ENTR  LAUNCH ASCENT x20"));
-  port.println(F("  V37 N12 ENTR  LAUNCH ASCENT x1"));
+  port.println(F("  V37 N11 ENTR  FULL MISSION FROM LAUNCH x20"));
+  port.println(F("  V37 N12 ENTR  FULL MISSION FROM LAUNCH x1"));
+  port.println(F("  MISSION,SPEED,<1-100> adjusts automated steps"));
+  port.println(F("  MISSION,REALTIME sets automated steps to x1"));
 
   for (uint8_t i = 0;
        i < sizeof(kMissionScenarios) / sizeof(kMissionScenarios[0]); ++i) {
     port.print(F("  V37 N"));
     printTwoDigits(port, kMissionScenarios[i].noun);
-    port.print(F(" ENTR  "));
+    port.print(F(" ENTR  AUTO FROM "));
     port.println(kMissionScenarios[i].label);
   }
 }
@@ -786,6 +1227,7 @@ void activateMissionScenario(uint8_t noun) {
     return;
   }
 
+  clearMissionProcedure();
   clearLaunchState();
   activeMissionScenarioIndex = index;
   const MissionScenario& scenario = kMissionScenarios[index];
@@ -795,9 +1237,120 @@ void activateMissionScenario(uint8_t noun) {
   emitMissionStatus(Serial);
 }
 
+bool missionProcedureCanAdvanceTo(uint8_t nextIndex) {
+  if (nextIndex >=
+      sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0])) {
+    return false;
+  }
+
+  const MissionProcedureStep* current = activeMissionProcedureStep();
+  if (current == nullptr) {
+    return false;
+  }
+
+  if (missionProcedureAutoChain) {
+    return kMissionProcedureSteps[nextIndex].noun >= 20 &&
+           kMissionProcedureSteps[nextIndex].noun <= 35;
+  }
+
+  return kMissionProcedureSteps[nextIndex].noun == current->noun;
+}
+
+void completeMissionProcedure() {
+  missionProcedureMode = MissionProcedureMode::Complete;
+  lastMissionProcedureMonitorMs = millis();
+  const MissionProcedureStep* step = activeMissionProcedureStep();
+  if (step != nullptr) {
+    configureMissionProcedureDisplay(*step);
+  }
+  refreshDskyFromCore();
+  Serial.println(F("Apollo 11 automated mission procedure complete."));
+  emitMissionStatus(Serial);
+}
+
+bool advanceMissionProcedureStep() {
+  const uint8_t nextIndex =
+      static_cast<uint8_t>(missionProcedureStepIndex + 1);
+  if (!missionProcedureCanAdvanceTo(nextIndex)) {
+    completeMissionProcedure();
+    return false;
+  }
+
+  missionProcedureStepIndex = nextIndex;
+  missionProcedureStepStartMs = millis();
+  lastMissionProcedureMonitorMs = 0;
+  const MissionProcedureStep& step =
+      kMissionProcedureSteps[missionProcedureStepIndex];
+  configureMissionProcedureDisplay(step);
+  refreshDskyFromCore();
+  pulseCompActy();
+  emitMissionStatus(Serial);
+  return true;
+}
+
+void startMissionProcedureAtNoun(uint8_t noun, bool chainToMissionEnd) {
+  const int8_t stepIndex = missionProcedureStepIndexForNoun(noun);
+  if (stepIndex < 0) {
+    activateMissionScenario(noun);
+    return;
+  }
+
+  clearLaunchState();
+  activeMissionScenarioIndex = -1;
+  missionScenarioLampMask = 0;
+  missionProcedureMode = MissionProcedureMode::Running;
+  missionProcedureStepIndex = static_cast<uint8_t>(stepIndex);
+  missionProcedureAutoChain = chainToMissionEnd;
+  missionProcedureStartNoun = noun;
+  missionProcedureStepStartMs = millis();
+  lastMissionProcedureMonitorMs = 0;
+
+  const MissionProcedureStep& step =
+      kMissionProcedureSteps[missionProcedureStepIndex];
+  configureMissionProcedureDisplay(step);
+  refreshDskyFromCore();
+
+  Serial.print(F("Apollo 11 automated mission procedure started at N"));
+  printTwoDigits(Serial, noun);
+  Serial.print(F(" x"));
+  Serial.println(missionProcedureTimeScale);
+  emitMissionStatus(Serial);
+}
+
+void updateMissionProcedure() {
+  if (missionProcedureMode != MissionProcedureMode::Running) {
+    return;
+  }
+
+  const MissionProcedureStep* step = activeMissionProcedureStep();
+  if (step == nullptr) {
+    completeMissionProcedure();
+    return;
+  }
+
+  const unsigned long now = millis();
+  const bool monitorDue =
+      lastMissionProcedureMonitorMs == 0 ||
+      now - lastMissionProcedureMonitorMs >= kMissionStepMonitorMs;
+
+  if (currentMissionStepElapsedSeconds() >= step->durationSec) {
+    advanceMissionProcedureStep();
+    return;
+  }
+
+  configureMissionProcedureDisplay(*step);
+  refreshDskyFromCore();
+
+  if (monitorDue) {
+    emitMissionStatus(Serial);
+    lastMissionProcedureMonitorMs = now;
+  }
+}
+
 void startLaunchSimulation() {
   clearMissionScenario();
   launchMode = LaunchMode::Running;
+  launchAutoChainMission = true;
   launchStartMs = millis();
   lastLaunchMonitorMs = 0;
   lastLaunchEventIndex = -1;
@@ -911,6 +1464,34 @@ void updateLaunchSimulation() {
   }
 
   lastLaunchMonitorMs = now;
+
+  if (reachedOrbit && launchAutoChainMission) {
+    launchAutoChainMission = false;
+    startMissionProcedureAtNoun(20, true);
+  }
+}
+
+void setMissionProcedureTimeScale(uint8_t scale) {
+  if (scale == 0) {
+    scale = 1;
+  }
+
+  if (scale > 100) {
+    scale = 100;
+  }
+
+  const uint32_t currentElapsed = currentMissionStepElapsedSeconds();
+  missionProcedureTimeScale = scale;
+
+  if (missionProcedureMode == MissionProcedureMode::Running) {
+    const uint32_t elapsedMs =
+        static_cast<uint32_t>((currentElapsed * 1000UL) /
+                              missionProcedureTimeScale);
+    missionProcedureStepStartMs = millis() - elapsedMs;
+  }
+
+  Serial.print(F("Mission procedure speed x"));
+  Serial.println(missionProcedureTimeScale);
 }
 
 void executeApollo11MissionNoun(uint8_t noun) {
@@ -931,7 +1512,7 @@ void executeApollo11MissionNoun(uint8_t noun) {
     return;
   }
 
-  activateMissionScenario(noun);
+  startMissionProcedureAtNoun(noun, noun >= 20 && noun <= 35);
 }
 
 void handleDskyEnterCommand() {
@@ -1374,7 +1955,34 @@ void emitCleanStatus(Stream& port) {
   port.print(agcPeripherals.keyruptCount());
   port.print(F(" | "));
   port.print(runStateText());
-  if (launchMode != LaunchMode::Off) {
+  if (activeMissionProcedureStep() != nullptr) {
+    const MissionProcedureStep* step = activeMissionProcedureStep();
+    const MissionTelemetry telemetry = computeTelemetryModel(*step);
+    port.print(F(" | MSN AUTO N"));
+    printTwoDigits(port, step->noun);
+    port.print(F(" S"));
+    port.print(static_cast<unsigned int>(missionProcedureDisplayStepNumber()));
+    port.print(' ');
+    port.print(step->label);
+    port.print(F(" | "));
+    port.print(step->r1Label);
+    port.print(' ');
+    port.print(telemetryValueForLabel(telemetry, step->r1Label,
+                                      step->getMin));
+    port.print(F(" | "));
+    port.print(step->r2Label);
+    port.print(' ');
+    port.print(telemetryValueForLabel(telemetry, step->r2Label, step->r2));
+    port.print(F(" | "));
+    port.print(step->r3Label);
+    port.print(' ');
+    port.print(telemetryValueForLabel(telemetry, step->r3Label, step->r3));
+    port.print(F(" | x"));
+    port.print(missionProcedureTimeScale);
+    if (missionProcedureMode == MissionProcedureMode::Complete) {
+      port.print(F(" COMPLETE"));
+    }
+  } else if (launchMode != LaunchMode::Off) {
     port.print(F(" | ASC "));
     printLaunchTime(port, launchSecond);
     port.print(' ');
@@ -1489,7 +2097,8 @@ void handleConsoleCommand(char* line) {
     Serial.println(F("  JOY JOYCAL"));
     Serial.println(F("  STATUS"));
     Serial.println(F("  APOLLO11,LIST APOLLO11,STATUS APOLLO11,STOP"));
-    Serial.println(F("  APOLLO11,<noun> or MISSION,<noun>"));
+    Serial.println(F("  APOLLO11,FULL APOLLO11,<noun> or MISSION,<noun>"));
+    Serial.println(F("  MISSION,SPEED,<1-100> MISSION,REALTIME"));
     Serial.println(F("  LAUNCH LAUNCH,STOP LAUNCH,STATUS"));
     Serial.println(F("  LAUNCH,SPEED,<1-100> LAUNCH,REALTIME"));
     Serial.println(F("  USB,CLEAN USB,RAW USB,BOTH USB,QUIET"));
@@ -1729,7 +2338,9 @@ void handleConsoleCommand(char* line) {
 
   if (strcmp(line, "APOLLO11,STATUS") == 0 ||
       strcmp(line, "MISSION,STATUS") == 0) {
-    if (launchMode != LaunchMode::Off) {
+    if (activeMissionProcedureStep() != nullptr) {
+      emitMissionStatus(Serial);
+    } else if (launchMode != LaunchMode::Off) {
       emitLaunchStatus(Serial);
     } else {
       emitMissionStatus(Serial);
@@ -1740,6 +2351,31 @@ void handleConsoleCommand(char* line) {
   if (strcmp(line, "APOLLO11,STOP") == 0 ||
       strcmp(line, "MISSION,STOP") == 0) {
     stopApollo11MissionProgram(true);
+    return;
+  }
+
+  if (strcmp(line, "APOLLO11,FULL") == 0 ||
+      strcmp(line, "MISSION,FULL") == 0) {
+    setLaunchTimeScale(kLaunchDefaultTimeScale);
+    startLaunchSimulation();
+    return;
+  }
+
+  if (strcmp(line, "APOLLO11,REALTIME") == 0 ||
+      strcmp(line, "MISSION,REALTIME") == 0) {
+    setMissionProcedureTimeScale(1);
+    return;
+  }
+
+  if (strncmp(line, "APOLLO11,SPEED,", 15) == 0) {
+    setMissionProcedureTimeScale(
+        static_cast<uint8_t>(strtoul(line + 15, nullptr, 10)));
+    return;
+  }
+
+  if (strncmp(line, "MISSION,SPEED,", 14) == 0) {
+    setMissionProcedureTimeScale(
+        static_cast<uint8_t>(strtoul(line + 14, nullptr, 10)));
     return;
   }
 
@@ -1933,6 +2569,7 @@ void loop() {
   }
 
   updateLaunchSimulation();
+  updateMissionProcedure();
 
   if (millis() >= compActyUntilMs &&
       dsky::lampEnabled(state, dsky::kLampCompActy)) {

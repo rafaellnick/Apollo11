@@ -36,8 +36,8 @@ What is implemented now:
 - physics-inspired mission telemetry helpers for ascent, coast, orbit, descent, and reentry
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
-- an Apollo 11 launch/ascent monitor simulation for first DSKY mission tests
-- an Apollo 11 mission command layer with DSKY commands for major nominal and abort situations
+- an Apollo 11 launch/ascent monitor simulation that can chain into the full automated mission sequence
+- an Apollo 11 mission command layer with automated DSKY procedures for major nominal and abort situations
 - a first PINBALL noun reference map for monitor/debug commands
 - phase-label telemetry from ESP32 to the ESP8266 Web DSKY
 - an `ESP8266` DSKY slave with a Wi-Fi browser interface for the first bench test
@@ -143,7 +143,7 @@ N
 
 ## Apollo 11 Launch Simulation
 
-The ESP32 has a first launch monitor simulation for bench testing the DSKY flow. It is not yet the real Comanche rope running the Saturn V ascent. It is a mission sequencer that drives DSKY displays and serial status through major Apollo 11 ascent events: terminal count, liftoff, roll program, Max-Q, staging, S-IVB burn, and parking orbit insertion.
+The ESP32 has a first launch monitor simulation for bench testing the DSKY flow. It is not yet the real Comanche rope running the Saturn V ascent. It is a mission sequencer that drives DSKY displays and serial status through major Apollo 11 ascent events: terminal count, liftoff, roll program, Max-Q, staging, S-IVB burn, and parking orbit insertion. After parking orbit, `N11` and `N12` now automatically chain into the full mission procedure sequence through recovery.
 
 Full Apollo 11 mission command table: `APOLLO11_MISSION_PROGRAM.md`.
 
@@ -173,7 +173,7 @@ During the launch simulation the display changes to `P11 V16 N62`:
 - `R2`: approximate altitude in kilometers
 - `R3`: approximate velocity in meters per second
 
-The default launch simulation speed is `x20`, so the 11 minute 45 second ascent to parking orbit runs in about 36 seconds. Use the ESP32 USB serial command `LAUNCH,SPEED,<1-100>` to change that speed.
+The default launch simulation speed is `x20`, so the 11 minute 45 second ascent to parking orbit runs in about 36 seconds. Use the ESP32 USB serial command `LAUNCH,SPEED,<1-100>` to change that speed. The post-ascent procedure sequencer defaults to `x10`; use `MISSION,SPEED,<1-100>` or `MISSION,REALTIME` to adjust it.
 
 ## PC Monitoring
 
@@ -227,6 +227,9 @@ Useful ESP32 USB commands:
 - `LAUNCH,STATUS`
 - `LAUNCH,SPEED,<1-100>`
 - `LAUNCH,REALTIME`
+- `APOLLO11,FULL`
+- `MISSION,SPEED,<1-100>`
+- `MISSION,REALTIME`
 - `USB,CLEAN`
 - `USB,RAW`
 - `USB,BOTH`
