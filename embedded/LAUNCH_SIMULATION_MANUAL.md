@@ -1,26 +1,26 @@
-# Manual da Simulacao de Lancamento Apollo 11
+# Apollo 11 Launch Simulation Manual
 
-Este manual explica como rodar a simulacao de lancamento usando:
+This manual explains how to run the launch simulation with:
 
-- `ESP32`: AGC core e simulador de ascento
-- `ESP8266`: DSKY slave com interface web
-- navegador no PC/celular: botoes e displays do DSKY
-- serial USB do ESP32: monitoramento limpo da missao
+- `ESP32`: AGC core board and ascent monitor
+- `ESP8266`: DSKY slave with the browser interface
+- PC or phone browser: DSKY buttons and displays
+- ESP32 USB serial: clean mission monitoring
 
-Importante: esta simulacao ainda nao e o software Comanche real executando uma rope completa. Ela e um `Launch Monitor`: uma camada de missao que faz o DSKY passar por eventos principais do ascento Apollo 11 enquanto o AGC core embarcado continua rodando.
+Important: this simulation is not yet the real Comanche rope flying a complete Saturn V ascent. It is a `Launch Monitor`, a mission-layer test mode that drives the DSKY through the major Apollo 11 ascent events while the embedded AGC core continues to run underneath.
 
-Para os comandos de missao completa alem do lancamento, veja `APOLLO11_MISSION_PROGRAM.md`.
+For the wider mission command table beyond launch, see `APOLLO11_MISSION_PROGRAM.md`.
 
-## Arquivos usados
+## Files Used
 
-- `embedded/esp32_agc_core/esp32_agc_core.ino`: AGC core no ESP32 e simulacao de lancamento
-- `embedded/esp8266_dsky_slave/esp8266_dsky_slave.ino`: DSKY slave no ESP8266
-- `embedded/esp8266_dsky_slave/web_dsky_page.h`: pagina web servida pelo ESP8266
-- `embedded/esp8266_dsky_slave/wifi_config.h.example`: modelo opcional para conectar o ESP8266 na sua rede Wi-Fi
+- `embedded/esp32_agc_core/esp32_agc_core.ino`: ESP32 AGC core and launch monitor
+- `embedded/esp8266_dsky_slave/esp8266_dsky_slave.ino`: ESP8266 DSKY slave
+- `embedded/esp8266_dsky_slave/web_dsky_page.h`: browser DSKY page served by the ESP8266
+- `embedded/esp8266_dsky_slave/wifi_config.h.example`: optional Wi-Fi template for joining your local network
 
-## Ligacao entre ESP32 e ESP8266
+## ESP32 To ESP8266 Link
 
-Use uma UART dedicada entre as placas.
+Use a dedicated UART between the boards.
 
 ```text
 ESP32 GPIO17 / TX2  ->  ESP8266 GPIO14 / NodeMCU D5
@@ -28,59 +28,59 @@ ESP32 GPIO16 / RX2  <-  ESP8266 GPIO12 / NodeMCU D6
 ESP32 GND           ->  ESP8266 GND
 ```
 
-As duas placas trabalham em `3.3V`, entao nao use sinal UART de `5V` nessa ligacao.
+Both boards use `3.3V` logic. Do not drive the ESP8266 UART with a `5V` signal.
 
-Velocidades:
+Serial speeds:
 
-- UART entre placas: `38400`
-- USB serial do ESP32: `115200`
-- USB serial do ESP8266: `115200`
+- board-to-board UART: `38400`
+- ESP32 USB serial: `115200`
+- ESP8266 USB serial: `115200`
 
-## Preparacao das placas
+## Board Preparation
 
-1. Abra `embedded/esp8266_dsky_slave/esp8266_dsky_slave.ino` na Arduino IDE.
-2. Selecione sua placa ESP8266 e envie o sketch.
-3. Abra `embedded/esp32_agc_core/esp32_agc_core.ino` na Arduino IDE.
-4. Selecione sua placa ESP32 e envie o sketch.
-5. Conecte a UART entre as placas usando o pinout acima.
-6. Abra o monitor serial do ESP32 em `115200`.
-7. Abra o monitor serial do ESP8266 em `115200`.
+1. Open `embedded/esp8266_dsky_slave/esp8266_dsky_slave.ino` in the Arduino IDE.
+2. Select your ESP8266 board and upload the sketch.
+3. Open `embedded/esp32_agc_core/esp32_agc_core.ino` in the Arduino IDE.
+4. Select your ESP32 board and upload the sketch.
+5. Wire the board-to-board UART using the pinout above.
+6. Open the ESP32 serial monitor at `115200`.
+7. Open the ESP8266 serial monitor at `115200`.
 
-## Wi-Fi do DSKY
+## DSKY Wi-Fi
 
-Sem configuracao extra, o ESP8266 cria uma rede propria:
+With no extra configuration, the ESP8266 starts its own access point:
 
 ```text
 SSID: AGC-DSKY
-Senha: apollo11
+Password: apollo11
 URL: http://192.168.4.1
 ```
 
-Conecte o PC ou celular nessa rede e abra `http://192.168.4.1`.
+Connect your PC or phone to that network and open `http://192.168.4.1`.
 
-Para conectar o ESP8266 na sua rede Wi-Fi, crie um arquivo local chamado `embedded/esp8266_dsky_slave/wifi_config.h` com este formato:
+To connect the ESP8266 to your own Wi-Fi network, create a local file named `embedded/esp8266_dsky_slave/wifi_config.h`:
 
 ```cpp
 #pragma once
 
-#define DSKY_WIFI_SSID "NomeDaSuaRede"
-#define DSKY_WIFI_PASSWORD "SenhaDaSuaRede"
+#define DSKY_WIFI_SSID "YourWiFiName"
+#define DSKY_WIFI_PASSWORD "YourWiFiPassword"
 
 #define DSKY_AP_SSID "AGC-DSKY"
 #define DSKY_AP_PASSWORD "apollo11"
 ```
 
-Esse arquivo esta no `.gitignore`, entao sua senha nao sera enviada para o GitHub. Quando conectar na sua rede, o ESP8266 imprime o IP no monitor serial. Ele tambem tenta responder em `http://agc-dsky.local`.
+That file is ignored by git, so your password will not be committed. When station mode connects, the ESP8266 prints its IP address on USB serial and also tries to publish `http://agc-dsky.local` through mDNS.
 
-## Inicio rapido
+## Quick Start
 
-No Web DSKY, pressione:
+On the Web DSKY, press:
 
 ```text
 VERB 37 NOUN 11 ENTR
 ```
 
-Em botoes:
+Button-by-button sequence:
 
 ```text
 VERB
@@ -92,29 +92,29 @@ NOUN
 ENTR
 ```
 
-O DSKY deve mudar para:
+The DSKY should change to:
 
 ```text
 P11 V16 N62
 ```
 
-Durante a simulacao:
+During the simulation:
 
-- `R1`: tempo de missao em segundos
-- `R2`: altitude aproximada em quilometros
-- `R3`: velocidade aproximada em metros por segundo
+- `R1`: mission time in seconds
+- `R2`: approximate altitude in kilometers
+- `R3`: approximate velocity in meters per second
 
-O tempo negativo em `R1` representa a contagem regressiva final. Por exemplo, `-00010` significa `T-10`.
+Negative `R1` values represent the final countdown. For example, `-00010` means `T-10`.
 
-## Parar a simulacao
+## Stop The Simulation
 
-No Web DSKY:
+On the Web DSKY:
 
 ```text
 VERB 37 NOUN 00 ENTR
 ```
 
-Em botoes:
+Button-by-button sequence:
 
 ```text
 VERB
@@ -126,17 +126,17 @@ NOUN
 ENTR
 ```
 
-## Rodar em tempo real
+## Run In Real Time
 
-Por padrao, a simulacao roda em `x20`, entao o ascento ate a orbita de estacionamento dura cerca de 36 segundos.
+By default, the simulation runs at `x20`, so ascent to parking orbit takes about 36 seconds.
 
-Para rodar em tempo real pelo DSKY:
+To run in real time from the DSKY:
 
 ```text
 VERB 37 NOUN 12 ENTR
 ```
 
-Em botoes:
+Button-by-button sequence:
 
 ```text
 VERB
@@ -148,9 +148,9 @@ NOUN
 ENTR
 ```
 
-## Comandos pelo serial do ESP32
+## ESP32 Serial Commands
 
-No monitor serial do ESP32, em `115200`, voce pode usar:
+In the ESP32 serial monitor at `115200`, you can use:
 
 ```text
 LAUNCH
@@ -160,23 +160,23 @@ LAUNCH,SPEED,20
 LAUNCH,REALTIME
 ```
 
-Significado:
+Meaning:
 
-- `LAUNCH`: inicia a simulacao no modo acelerado atual
-- `LAUNCH,STOP`: para e volta o painel para `P00 V16 N36`
-- `LAUNCH,STATUS`: imprime o estado atual da simulacao
-- `LAUNCH,SPEED,20`: define escala de tempo, de `1` a `100`
-- `LAUNCH,REALTIME`: define escala `x1`
+- `LAUNCH`: starts the simulation using the current accelerated-time setting
+- `LAUNCH,STOP`: stops the simulation and returns the panel to `P00 V16 N36`
+- `LAUNCH,STATUS`: prints the current simulation state
+- `LAUNCH,SPEED,20`: sets the time scale from `1` to `100`
+- `LAUNCH,REALTIME`: sets the time scale to `x1`
 
-## Saida serial esperada no ESP32
+## Expected ESP32 Serial Output
 
-Com a simulacao rodando, a saida limpa do ESP32 passa a incluir um bloco `ASC`:
+With the simulation running, the ESP32 clean output includes an `ASC` block:
 
 ```text
 AGC P11 V16 N62 | R1 +00013 R2 +00002 R3 +00081 | ALM 0000 | JOY +0000,+0000,0 | Z 4000 A 21521 | CYC 123456 | RUN | ASC T+00:13 ROLL PROGRAM ALT 2km VEL 81m/s x20
 ```
 
-Eventos importantes tambem aparecem como linhas `LAUNCH`:
+Major events also appear as `LAUNCH` lines:
 
 ```text
 LAUNCH T+00:00 LIFTOFF | P11 V16 N62 | R1 T+0 R2 ALT_KM 0 R3 VEL_MS 0 | x20
@@ -184,11 +184,11 @@ LAUNCH T+01:23 MAX-Q | P11 V16 N62 | R1 T+83 R2 ALT_KM 14 R3 VEL_MS 520 | x20
 LAUNCH T+11:45 PARKING ORBIT | P11 V16 N62 | R1 T+705 R2 ALT_KM 185 R3 VEL_MS 7800 | x20 COMPLETE
 ```
 
-## Linha do tempo simulada
+## Simulated Timeline
 
-Estes sao os eventos atualmente codificados no ESP32:
+These are the events currently encoded in the ESP32 launch monitor:
 
-| Tempo | Evento no serial |
+| Time | Serial event |
 | --- | --- |
 | `T-00:10` | `TERMINAL COUNT` |
 | `T-00:08` | `F-1 IGNITION` |
@@ -207,64 +207,64 @@ Estes sao os eventos atualmente codificados no ESP32:
 | `T+09:15` | `S-II/S-IVB STAGING` |
 | `T+11:45` | `PARKING ORBIT` |
 
-As altitudes e velocidades sao aproximacoes para visualizacao no DSKY. Elas nao sao uma simulacao fisica completa do Saturn V.
+Altitudes and velocities are approximations for DSKY visualization. They are not a complete Saturn V flight-dynamics simulation.
 
-## O que observar no Web DSKY
+## What To Watch On The Web DSKY
 
-Ao iniciar:
+At start:
 
-- `PROG` deve virar `11`
-- `VERB` deve virar `16`
-- `NOUN` deve virar `62`
-- `R1` comeca perto de `-00010`
-- `R2` e `R3` comecam em `+00000`
+- `PROG` should become `11`
+- `VERB` should become `16`
+- `NOUN` should become `62`
+- `R1` should start near `-00010`
+- `R2` and `R3` should start near `+00000`
 
-Durante o ascento:
+During ascent:
 
-- `R1` aumenta ate `+00705`
-- `R2` sobe ate aproximadamente `+00185`
-- `R3` sobe ate aproximadamente `+07800`
-- algumas lampadas podem acender para indicar atividade de programa, uplink/telemetria e tracking
+- `R1` increases to `+00705`
+- `R2` rises to about `+00185`
+- `R3` rises to about `+07800`
+- some lamps may light to show program activity, uplink/telemetry, and tracking state
 
-Ao terminar:
+At completion:
 
-- o serial mostra `PARKING ORBIT`
-- o DSKY continua em `P11 V16 N62`
-- `R1` fica em `+00705`
-- `R2` fica perto de `+00185`
-- `R3` fica perto de `+07800`
+- USB serial prints `PARKING ORBIT`
+- the DSKY remains at `P11 V16 N62`
+- `R1` stays at `+00705`
+- `R2` stays near `+00185`
+- `R3` stays near `+07800`
 
 ## Troubleshooting
 
-Se o Web DSKY abre mas nao muda estado:
+If the Web DSKY opens but does not change state:
 
-- confirme que o ESP32 e o ESP8266 tem `GND` em comum
-- confirme `ESP32 GPIO17 -> ESP8266 D5/GPIO14`
-- confirme `ESP8266 D6/GPIO12 -> ESP32 GPIO16`
-- confira se os dois sketches foram enviados depois das ultimas alteracoes
-- abra o serial do ESP8266 e procure linhas `DSKY LINK=1`
+- confirm that the ESP32 and ESP8266 share `GND`
+- confirm `ESP32 GPIO17 -> ESP8266 D5/GPIO14`
+- confirm `ESP8266 D6/GPIO12 -> ESP32 GPIO16`
+- confirm both sketches were uploaded after the latest changes
+- open the ESP8266 serial monitor and look for `DSKY LINK=1`
 
-Se o Web DSKY nao abre:
+If the Web DSKY does not open:
 
-- conecte na rede `AGC-DSKY`
-- abra `http://192.168.4.1`
-- se estiver usando sua rede Wi-Fi, veja o IP impresso no serial do ESP8266
-- tente `http://agc-dsky.local` se seu sistema suportar mDNS
+- connect to the `AGC-DSKY` Wi-Fi network
+- open `http://192.168.4.1`
+- if using your own Wi-Fi network, read the IP address printed by the ESP8266 serial monitor
+- try `http://agc-dsky.local` if your system supports mDNS
 
-Se o ESP32 nao mostra linhas `LAUNCH`:
+If the ESP32 does not print `LAUNCH` lines:
 
-- abra o serial do ESP32 em `115200`
-- envie `LAUNCH,STATUS`
-- envie `LAUNCH`
-- confirme que a saida USB nao esta em modo quiet com `USB,CLEAN`
+- open the ESP32 serial monitor at `115200`
+- send `LAUNCH,STATUS`
+- send `LAUNCH`
+- confirm USB output is not quiet by sending `USB,CLEAN`
 
-Se digitar numeros no DSKY aciona alarme:
+If numeric DSKY input triggers an alarm:
 
-- primeiro pressione `VERB` ou `NOUN`
-- depois digite exatamente dois digitos
-- para iniciar a simulacao, a sequencia correta e `VERB 37 NOUN 11 ENTR`
+- press `VERB` or `NOUN` first
+- then enter exactly two digits
+- to start the launch simulation, use `VERB 37 NOUN 11 ENTR`
 
-## Fontes historicas usadas
+## Historical References
 
 - [Apollo 11 Flight Journal, Day 1: Launch](https://www.apollojournals.org/afj/ap11fj/01launch.html)
 - [NASA Apollo 11 Mission Overview](https://www.nasa.gov/history/apollo-11-mission-overview/)

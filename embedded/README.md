@@ -147,7 +147,7 @@ The ESP32 has a first launch monitor simulation for bench testing the DSKY flow.
 
 Full Apollo 11 mission command table: `APOLLO11_MISSION_PROGRAM.md`.
 
-Full Portuguese operating manual: `LAUNCH_SIMULATION_MANUAL.md`.
+Full launch simulation operating manual: `LAUNCH_SIMULATION_MANUAL.md`.
 
 Start it from the Web DSKY:
 

@@ -1,5 +1,18 @@
 # Arduino Uno Port Start
 
+## Current role in the project
+
+The Uno path is now a constrained frontend/subset path, not the main native AGC core path.
+
+The current high-fidelity direction is:
+
+- `ESP32`: native AGC core, rope loader, timing model, serial monitor, joystick input
+- `ESP8266`: first Web DSKY slave over Wi-Fi and UART
+- `Arduino Mega`: larger physical DSKY/panel option
+- `Arduino Uno`: compact LCD/serial terminal, host-driven display, or very small AGC-like subset
+
+This folder remains useful for a minimal `16x2 LCD + serial` build, but the Uno cannot hold a faithful Block II AGC core plus a Comanche/Luminary rope image. If the goal is historical validation, use the ESP32/desktop harness documented in `embedded/README.md` and `embedded/ROPE_BUILD.md`.
+
 ## What this repository contains
 
 This repository is not a modern C or C++ codebase. It is the original Apollo Guidance Computer assembly source, split into include files for two Apollo 11 flight programs:
@@ -42,14 +55,14 @@ That means even a compact whole-machine emulator runs out of Uno memory before w
 - serial telemetry buffers
 - command parsing
 
-So the project should be framed as one of these three paths:
+So the Uno project should be framed as one of these three paths:
 
 1. `Uno frontend + external AGC core`
    The Uno becomes a DSKY/telemetry terminal. A PC or larger MCU runs the AGC logic.
 2. `Uno-native AGC subset`
    Recreate a narrow, useful slice of AGC behavior: a few verbs, nouns, monitor pages, alarms, and selected mission math.
-3. `Larger MCU for the core, Uno for the panel`
-   Best if you want much higher fidelity later.
+3. `ESP32 native core, Uno panel`
+   The ESP32 runs the AGC core while the Uno drives a small LCD or status panel.
 
 For the Uno specifically, path `1` or `2` is the right place to start.
 
@@ -162,4 +175,15 @@ This makes the Uno immediately usable as a hardware display target for later scr
 4. Decide whether the next milestone is:
    - a host-driven AGC viewer, or
    - a standalone Uno-native subset
-5. If full instruction-level fidelity is still required, move the execution core off the Uno.
+5. If full instruction-level fidelity is required, keep the execution core off the Uno and use the ESP32 or desktop trace harness.
+
+## Relationship to the native AGC core
+
+The embedded ESP32 core now has:
+
+- yaYUL rope-image loading for Comanche/Luminary builds
+- Block II memory, opcode, channel, interrupt, editing-register, and timing models
+- first-pass downrupt/uplink/radar/hand-controller/restart behavior
+- yaAGC trace-validation tooling with CPU-only and faithful hardware-timing windows
+
+That work should not be duplicated on the Uno. The recommended Uno milestone is to consume status frames from a host or ESP32 and present them on the LCD/serial interface.

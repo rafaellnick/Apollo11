@@ -1,36 +1,38 @@
 # Apollo 11 Mission Program Commands
 
-Este arquivo descreve a camada `Apollo 11 Mission Program` do ESP32.
+This document describes the ESP32 `Apollo 11 Mission Program` bench layer.
 
-Ela nao substitui o Comanche real ainda. O objetivo desta camada e dar ao DSKY comandos de missao para todas as situacoes principais da Apollo 11 enquanto continuamos evoluindo o AGC core, a rope loader e os modelos de perifericos.
+It does not replace real Comanche or Luminary execution. Its job is to provide DSKY-selectable mission situations for the ESP32/ESP8266 hardware stack while the native AGC core, rope loader, timing model, and peripheral models keep moving toward historical validation.
 
-## Como executar pelo Web DSKY
+Use this layer for DSKY, serial, joystick, Web DSKY, and panel testing. Use the rope-validation tools in `ROPE_BUILD.md` when the goal is instruction-level comparison against yaAGC/VirtualAGC.
 
-Use sempre este formato:
+## Run From The Web DSKY
+
+Use this format:
 
 ```text
 VERB 37 NOUN xx ENTR
 ```
 
-Onde `xx` e o codigo da situacao de missao.
+`xx` is the mission-situation noun.
 
-Exemplo para iniciar o lancamento acelerado:
+Accelerated launch example:
 
 ```text
 VERB 37 NOUN 11 ENTR
 ```
 
-Exemplo para selecionar pouso lunar:
+Lunar landing surface-state example:
 
 ```text
 VERB 37 NOUN 28 ENTR
 ```
 
-## Como executar pelo serial do ESP32
+## Run From ESP32 Serial
 
-Abra o monitor serial do ESP32 em `115200`.
+Open the ESP32 USB serial monitor at `115200`.
 
-Comandos:
+Supported commands:
 
 ```text
 APOLLO11,LIST
@@ -40,87 +42,87 @@ APOLLO11,28
 MISSION,28
 ```
 
-`APOLLO11,<noun>` e `MISSION,<noun>` fazem a mesma coisa.
+`APOLLO11,<noun>` and `MISSION,<noun>` are equivalent.
 
-## Leitura do DSKY
+## DSKY Readout
 
-Para as situacoes estaticas, o DSKY mostra:
+For static mission situations, the DSKY shows:
 
-- `PROG`: programa AGC aproximado para aquela fase
-- `VERB`: normalmente `16`, monitoramento
-- `NOUN`: codigo da situacao selecionada
-- `R1`: tempo GET em minutos, ou campo especial quando indicado
-- `R2`: altitude, distancia, tempo de queima ou parametro da fase
-- `R3`: velocidade, delta-v ou codigo de status
+- `PROG`: approximate AGC program for that phase
+- `VERB`: normally `16`, monitor mode
+- `NOUN`: selected mission-situation noun
+- `R1`: GET in minutes, or a phase-specific field when noted
+- `R2`: altitude, range, burn time, or phase-specific value
+- `R3`: velocity, delta-v, or status code
 
-Para o lancamento `N11` ou `N12`, o display muda para `P11 V16 N62`:
+For launch `N11` or `N12`, the display changes to `P11 V16 N62`:
 
-- `R1`: tempo em segundos desde liftoff, negativo antes de `T+00:00`
-- `R2`: altitude aproximada em km
-- `R3`: velocidade aproximada em m/s
+- `R1`: mission time in seconds from liftoff, negative before `T+00:00`
+- `R2`: approximate altitude in kilometers
+- `R3`: approximate velocity in meters per second
 
-## Tabela de comandos DSKY
+## DSKY Command Table
 
-| Comando | Situacao | Display esperado | R1 | R2 | R3 |
+| Command | Situation | Expected display | R1 | R2 | R3 |
 | --- | --- | --- | --- | --- | --- |
-| `V37 N00 ENTR` | parar programa de missao | `P00 V16 N36` | contador AGC | A | Z |
-| `V37 N11 ENTR` | lancamento e ascento, acelerado `x20` | `P11 V16 N62` | `T+ sec` | `ALT_KM` | `VEL_MS` |
-| `V37 N12 ENTR` | lancamento e ascento, tempo real `x1` | `P11 V16 N62` | `T+ sec` | `ALT_KM` | `VEL_MS` |
-| `V37 N20 ENTR` | orbita terrestre de estacionamento | `P11 V16 N20` | `GET_MIN` | `ALT_KM` | `VEL_MS` |
-| `V37 N21 ENTR` | injecao translunar | `P15 V16 N21` | `GET_MIN` | `BURN_SEC` | `DV_MPS` |
-| `V37 N22 ENTR` | transposicao e docking CSM/LM | `P17 V16 N22` | `GET_MIN` | `RANGE_M` | `DOCKED` |
-| `V37 N23 ENTR` | costa translunar | `P23 V16 N23` | `GET_MIN` | `DIST_KKM` | `MCC` |
-| `V37 N24 ENTR` | insercao em orbita lunar | `P40 V16 N24` | `GET_MIN` | `BURN_SEC` | `DV_MPS` |
-| `V37 N25 ENTR` | orbita lunar | `P20 V16 N25` | `GET_MIN` | `ALT_KM` | `ORBIT` |
-| `V37 N26 ENTR` | descida propulsada | `P63 V16 N26` | `GET_MIN` | `ALT_KM` | `VEL_MS` |
-| `V37 N27 ENTR` | fase final de pouso | `P66 V16 N27` | `GET_MIN` | `ALT_M` | `VEL_MS` |
-| `V37 N28 ENTR` | pousado na superficie | `P68 V16 N28` | `GET_MIN` | `ALT_M` | `LANDED` |
-| `V37 N29 ENTR` | EVA lunar | `P00 V16 N29` | `GET_MIN` | `EVA_MIN` | `SAMPLE_KG` |
-| `V37 N30 ENTR` | subida do LM | `P12 V16 N30` | `GET_MIN` | `BURN_SEC` | `VEL_MS` |
-| `V37 N31 ENTR` | rendezvous e docking | `P20 V16 N31` | `GET_MIN` | `RANGE_KM` | `DOCKED` |
-| `V37 N32 ENTR` | injecao transterrestre | `P40 V16 N32` | `GET_MIN` | `BURN_SEC` | `DV_MPS` |
-| `V37 N33 ENTR` | costa transterrestre | `P23 V16 N33` | `GET_MIN` | `DIST_KKM` | `MCC` |
-| `V37 N34 ENTR` | interface de reentrada | `P61 V16 N34` | `GET_MIN` | `ALT_KM` | `VEL_MS` |
-| `V37 N35 ENTR` | splashdown e recuperacao | `P67 V16 N35` | `GET_MIN` | `ALT_KM` | `RECOVERY` |
-| `V37 N40 ENTR` | aborto de lancamento Mode I | `P70 V16 N40` | `GET_MIN` | `MODE` | `STATUS` |
-| `V37 N41 ENTR` | aborto em orbita terrestre | `P37 V16 N41` | `GET_MIN` | `DV_MPS` | `STATUS` |
-| `V37 N42 ENTR` | aborto/free-return translunar | `P37 V16 N42` | `GET_MIN` | `MCC` | `STATUS` |
-| `V37 N43 ENTR` | aborto da descida lunar | `P71 V16 N43` | `GET_MIN` | `ALT_KM` | `STATUS` |
-| `V37 N44 ENTR` | demonstracao alarme `1202` | `P63 V16 N44` | `ALARM` | `RECYCLE` | `STATUS` |
-| `V37 N45 ENTR` | demonstracao alarme `1201` | `P63 V16 N45` | `ALARM` | `RECYCLE` | `STATUS` |
-| `V37 N46 ENTR` | perda de comunicacao | `P00 V16 N46` | `GET_MIN` | `UPLINK` | `STATUS` |
-| `V37 N47 ENTR` | realinhamento IMU | `P52 V16 N47` | `GET_MIN` | `STAR` | `STATUS` |
-| `V37 N48 ENTR` | atitude manual / RHC | `P00 V16 N48` | `GET_MIN` | `RHC` | `STATUS` |
+| `V37 N00 ENTR` | Stop mission program | `P00 V16 N36` | AGC counter | A | Z |
+| `V37 N11 ENTR` | Launch and ascent, accelerated `x20` | `P11 V16 N62` | `T+ sec` | `ALT_KM` | `VEL_MS` |
+| `V37 N12 ENTR` | Launch and ascent, real time `x1` | `P11 V16 N62` | `T+ sec` | `ALT_KM` | `VEL_MS` |
+| `V37 N20 ENTR` | Earth parking orbit | `P11 V16 N20` | `GET_MIN` | `ALT_KM` | `VEL_MS` |
+| `V37 N21 ENTR` | Translunar injection | `P15 V16 N21` | `GET_MIN` | `BURN_SEC` | `DV_MPS` |
+| `V37 N22 ENTR` | CSM/LM transposition and docking | `P17 V16 N22` | `GET_MIN` | `RANGE_M` | `DOCKED` |
+| `V37 N23 ENTR` | Translunar coast | `P23 V16 N23` | `GET_MIN` | `DIST_KKM` | `MCC` |
+| `V37 N24 ENTR` | Lunar orbit insertion | `P40 V16 N24` | `GET_MIN` | `BURN_SEC` | `DV_MPS` |
+| `V37 N25 ENTR` | Lunar orbit | `P20 V16 N25` | `GET_MIN` | `ALT_KM` | `ORBIT` |
+| `V37 N26 ENTR` | Powered descent | `P63 V16 N26` | `GET_MIN` | `ALT_KM` | `VEL_MS` |
+| `V37 N27 ENTR` | Final landing phase | `P66 V16 N27` | `GET_MIN` | `ALT_M` | `VEL_MS` |
+| `V37 N28 ENTR` | Landed on lunar surface | `P68 V16 N28` | `GET_MIN` | `ALT_M` | `LANDED` |
+| `V37 N29 ENTR` | Lunar EVA | `P00 V16 N29` | `GET_MIN` | `EVA_MIN` | `SAMPLE_KG` |
+| `V37 N30 ENTR` | LM ascent | `P12 V16 N30` | `GET_MIN` | `BURN_SEC` | `VEL_MS` |
+| `V37 N31 ENTR` | Rendezvous and docking | `P20 V16 N31` | `GET_MIN` | `RANGE_KM` | `DOCKED` |
+| `V37 N32 ENTR` | Transearth injection | `P40 V16 N32` | `GET_MIN` | `BURN_SEC` | `DV_MPS` |
+| `V37 N33 ENTR` | Transearth coast | `P23 V16 N33` | `GET_MIN` | `DIST_KKM` | `MCC` |
+| `V37 N34 ENTR` | Reentry interface | `P61 V16 N34` | `GET_MIN` | `ALT_KM` | `VEL_MS` |
+| `V37 N35 ENTR` | Splashdown and recovery | `P67 V16 N35` | `GET_MIN` | `ALT_KM` | `RECOVERY` |
+| `V37 N40 ENTR` | Launch abort Mode I | `P70 V16 N40` | `GET_MIN` | `MODE` | `STATUS` |
+| `V37 N41 ENTR` | Earth-orbit abort | `P37 V16 N41` | `GET_MIN` | `DV_MPS` | `STATUS` |
+| `V37 N42 ENTR` | Translunar abort / free return | `P37 V16 N42` | `GET_MIN` | `MCC` | `STATUS` |
+| `V37 N43 ENTR` | Lunar-descent abort | `P71 V16 N43` | `GET_MIN` | `ALT_KM` | `STATUS` |
+| `V37 N44 ENTR` | Program alarm `1202` demo | `P63 V16 N44` | `ALARM` | `RECYCLE` | `STATUS` |
+| `V37 N45 ENTR` | Program alarm `1201` demo | `P63 V16 N45` | `ALARM` | `RECYCLE` | `STATUS` |
+| `V37 N46 ENTR` | Loss of communication | `P00 V16 N46` | `GET_MIN` | `UPLINK` | `STATUS` |
+| `V37 N47 ENTR` | IMU realignment | `P52 V16 N47` | `GET_MIN` | `STAR` | `STATUS` |
+| `V37 N48 ENTR` | Manual attitude / RHC | `P00 V16 N48` | `GET_MIN` | `RHC` | `STATUS` |
 
-## Saida serial esperada
+## Expected Serial Output
 
-Selecionando uma situacao estatica:
+Selecting a static situation:
 
 ```text
 APOLLO11 N28 P68 V16 LANDED SURFACE | GET_MIN 6155 | ALT_M 0 | LANDED 1 | ALM 0000
 ```
 
-A saida limpa de status tambem inclui o bloco `MSN`:
+The clean ESP32 status line also includes the `MSN` block:
 
 ```text
 AGC P68 V16 N28 | R1 +06155 R2 +00000 R3 +00001 | ALM 0000 | JOY +0000,+0000,0 | Z 4000 A 21521 | CYC 123456 | RUN | MSN N28 LANDED SURFACE | GET_MIN 6155 | ALT_M 0 | LANDED 1
 ```
 
-Selecionando um alarme:
+Selecting an alarm demo:
 
 ```text
 VERB 37 NOUN 44 ENTR
 ```
 
-Saida esperada:
+Expected output:
 
 ```text
 APOLLO11 N44 P63 V16 PROGRAM ALARM 1202 | ALARM 1202 | RECYCLE 1 | STATUS 0 | ALM 1202
 ```
 
-## Comandos de teste recomendados
+## Recommended Test Commands
 
-Teste rapido da missao inteira:
+Fast full-mission path:
 
 ```text
 V37 N11 ENTR
@@ -134,7 +136,7 @@ V37 N32 ENTR
 V37 N35 ENTR
 ```
 
-Teste de situacoes anormais:
+Abnormal-situation path:
 
 ```text
 V37 N40 ENTR
@@ -144,46 +146,43 @@ V37 N45 ENTR
 V37 N46 ENTR
 ```
 
-Voltar para o modo basico:
+Return to the basic monitor display:
 
 ```text
 V37 N00 ENTR
 ```
 
-## Limites desta camada
+## Current Fidelity Boundary
 
-Esta camada e intencionalmente operacional, nao historicamente perfeita:
+This mission layer is intentionally operational, not historically exact:
 
-- nao executa ainda todos os jobs, interrupts e erasable memory do Comanche real
-- nao calcula trajetoria orbital real
-- nao modela IMU, radar, SPS, DPS, APS, RCS e telemetria em alta fidelidade
-- nao substitui os procedimentos completos de checklist da tripulacao
+- it does not run the full Comanche or Luminary job tree for each mission phase
+- it does not calculate a high-fidelity Saturn V, CSM, or LM trajectory
+- it does not yet model IMU, rendezvous radar, landing radar, SPS, DPS, APS, RCS, or telemetry electronics as physical devices
+- it is not a substitute for the real Apollo 11 crew checklists
 
-O valor dela agora e permitir testar o DSKY e a arquitetura ESP32/ESP8266 em todos os grandes modos de missao enquanto o core AGC nativo evolui.
+Its current value is hardware coverage. It lets the ESP32 core, ESP8266 Web DSKY, optional Mega panel, joystick input, serial monitor, and display protocol exercise all major mission modes while the native AGC core is validated against yaAGC/VirtualAGC.
 
-## Status dos proximos passos tecnicos
+## Native AGC Core Status
 
-Implementado neste bloco:
+Implemented in the native core and validation path:
 
-- caminho inicial para carregar imagens de rope geradas externamente pelo `yaYUL`
-- helper `embedded/tools/build_rope_image.ps1` para validar `Comanche055`/`Luminary099`, executar `yaYUL` quando disponivel e gerar `rope_image.h`
-- loader `ROPE,INFO` / `ROPE,LOAD` para o ESP32
-- mapa de memoria Block II para erasable direto/chaveado, common fixed e fixed-fixed
-- infraestrutura de instrucoes estendidas, `RELINT`, `INHINT`, `RESUME`, interrupts, canais I/O e registradores especiais basicos no core AGC
-- decoder Block II explicito para opcodes basicos, extracodes, quarter-code e peripheral-code
-- comportamento de leitura/escrita dos registradores de edicao `CYR`, `SR`, `CYL` e `EDOP`
-- canais AGC de 9 bits, incluindo aliases `L`/`Q` e bit `SUPERBNK`
-- vetores Block II para `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR` e `HANDRUPT`
-- contagem de ciclos em MCT para aproximar timing de instrucoes, contadores `TIME1..TIME6`, `KEYRUPT` e `DOWNRUPT`
-- camada deterministica de perifericos para `KEYRUPT`, `DOWNRUPT`, uplink por teclado e fila de downlink
-- manifesto de rope real com hashes quando `yaYUL` gera `rope_image.h`
-- mapa inicial de nouns reais do `PINBALL` para consulta serial
-- modelo de telemetria de missao com helpers fisicos leves para subida, costa, orbita, descida e reentrada
-- extensao `PHASE,...` do protocolo para o Web DSKY exibir fase e nomes dos registradores
-- harness `agc_trace_runner` e comparador CSV para validar o core contra traces normalizados do yaAGC/VirtualAGC
+- yaYUL rope-image build and conversion for `Comanche055` and `Luminary099`
+- ESP32 `ROPE,INFO` / `ROPE,LOAD` loader commands
+- Block II memory mapping for direct erasable, switched erasable, common fixed, and fixed-fixed windows
+- explicit Block II basic, extracode, quarter-code, and peripheral-code instruction dispatch
+- editing-register behavior for `CYR`, `SR`, `CYL`, and `EDOP`
+- 9-bit AGC I/O channels, including `L`/`Q` aliases and `SUPERBNK`
+- interrupt vectors for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
+- MCT cycle accounting for instructions, scaler steals, counter pulses, interrupt entry rows, and peripheral timing
+- deterministic peripheral models for key input, downrupt/downlink, uplink, radar source words, hand-controller traps, and restart-monitor latches
+- bit-level uplink with parity conversion and channel-77 parity-fail restart behavior
+- downlink frame capture for channel `034/035` pairs
+- real rope trace validation against yaAGC, including CPU-only and faithful hardware-timing windows
 
-Ainda falta para ficar historicamente fiel:
+Still required before claiming a complete historical AGC replica:
 
-- ter um `yaYUL` executavel no ambiente e validar uma imagem real gerada de Comanche/Luminary no ESP32
-- validar a semantica de opcodes, modos de enderecamento, interrupts, downrupt, uplink/downlink e perifericos contra traces do yaAGC/VirtualAGC
-- substituir os modelos fisicos leves por simuladores orbitais e de veiculo em alta fidelidade
+- continuous mission-length Comanche and Luminary validation runs
+- broader trace sampling around every major mission phase
+- faithful spacecraft electrical and sensor data-source models
+- full IMU, optics, radar, propulsion, RCS, telemetry, and uplink/downlink environment simulation

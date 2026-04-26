@@ -2,6 +2,8 @@
 
 This project has an embedded rope-image hook for the ESP32 AGC core and a local helper for the Virtual AGC source layout in this repository.
 
+All port documentation is maintained in English, including the ESP32/ESP8266/Mega/Uno hardware notes, mission test guides, and rope-validation workflow.
+
 The local Apollo 11 source directories are already in yaYUL's expected shape:
 
 - `Comanche055/MAIN.agc` includes the Command Module source files.
