@@ -68,6 +68,21 @@ struct LaunchEvent {
   const char* label;
 };
 
+struct MissionScenario {
+  uint8_t noun;
+  uint8_t program;
+  uint8_t verb;
+  const char* label;
+  const char* r1Label;
+  const char* r2Label;
+  const char* r3Label;
+  int16_t r1;
+  int16_t r2;
+  int16_t r3;
+  uint16_t alarm;
+  uint32_t lampMask;
+};
+
 constexpr LaunchEvent kLaunchEvents[] = {
     {-10, "TERMINAL COUNT"},
     {-8, "F-1 IGNITION"},
@@ -87,6 +102,59 @@ constexpr LaunchEvent kLaunchEvents[] = {
     {705, "PARKING ORBIT"},
 };
 
+constexpr MissionScenario kMissionScenarios[] = {
+    {20, 11, 16, "EARTH PARKING ORBIT", "GET_MIN", "ALT_KM", "VEL_MS", 12,
+     185, 7800, 0, dsky::kLampProg | dsky::kLampTracker},
+    {21, 15, 16, "TRANSLUNAR INJECTION", "GET_MIN", "BURN_SEC", "DV_MPS",
+     164, 348, 3200, 0, dsky::kLampProg | dsky::kLampUplinkActy},
+    {22, 17, 16, "CSM TRANSPOSE DOCK", "GET_MIN", "RANGE_M", "DOCKED",
+     190, 30, 1, 0, dsky::kLampProg | dsky::kLampCompActy},
+    {23, 23, 16, "TRANSLUNAR COAST", "GET_MIN", "DIST_KKM", "MCC", 720,
+     120, 2, 0, dsky::kLampTracker},
+    {24, 40, 16, "LUNAR ORBIT INSERTION", "GET_MIN", "BURN_SEC", "DV_MPS",
+     4470, 357, 900, 0, dsky::kLampProg | dsky::kLampUplinkActy},
+    {25, 20, 16, "LUNAR ORBIT", "GET_MIN", "ALT_KM", "ORBIT", 4520, 111,
+     1, 0, dsky::kLampTracker},
+    {26, 63, 16, "POWERED DESCENT", "GET_MIN", "ALT_KM", "VEL_MS", 6120,
+     15, 1680, 0, dsky::kLampProg | dsky::kLampTracker},
+    {27, 66, 16, "LANDING FINAL", "GET_MIN", "ALT_M", "VEL_MS", 6150,
+     150, 50, 0, dsky::kLampProg | dsky::kLampKeyRel},
+    {28, 68, 16, "LANDED SURFACE", "GET_MIN", "ALT_M", "LANDED", 6155,
+     0, 1, 0, dsky::kLampProg | dsky::kLampTracker},
+    {29, 0, 16, "LUNAR SURFACE EVA", "GET_MIN", "EVA_MIN", "SAMPLE_KG",
+     6540, 151, 22, 0, dsky::kLampTracker},
+    {30, 12, 16, "LUNAR ASCENT", "GET_MIN", "BURN_SEC", "VEL_MS", 7460,
+     435, 1800, 0, dsky::kLampProg | dsky::kLampUplinkActy},
+    {31, 20, 16, "RENDEZVOUS DOCKING", "GET_MIN", "RANGE_KM", "DOCKED",
+     7560, 0, 1, 0, dsky::kLampProg | dsky::kLampCompActy},
+    {32, 40, 16, "TRANSEARTH INJECTION", "GET_MIN", "BURN_SEC", "DV_MPS",
+     8080, 151, 1000, 0, dsky::kLampProg | dsky::kLampUplinkActy},
+    {33, 23, 16, "TRANSEARTH COAST", "GET_MIN", "DIST_KKM", "MCC", 9000,
+     250, 0, 0, dsky::kLampTracker},
+    {34, 61, 16, "ENTRY INTERFACE", "GET_MIN", "ALT_KM", "VEL_MS", 11700,
+     122, 11000, 0, dsky::kLampProg | dsky::kLampTemp},
+    {35, 67, 16, "SPLASHDOWN", "GET_MIN", "ALT_KM", "RECOVERY", 11773, 0,
+     1, 0, dsky::kLampProg | dsky::kLampTracker},
+    {40, 70, 16, "LAUNCH ABORT MODE I", "GET_MIN", "MODE", "STATUS", 1, 1,
+     40, 0, dsky::kLampOprErr | dsky::kLampStby},
+    {41, 37, 16, "EARTH ORBIT ABORT", "GET_MIN", "DV_MPS", "STATUS", 180,
+     200, 41, 0, dsky::kLampOprErr | dsky::kLampUplinkActy},
+    {42, 37, 16, "FREE RETURN ABORT", "GET_MIN", "MCC", "STATUS", 1000, 1,
+     42, 0, dsky::kLampOprErr | dsky::kLampTracker},
+    {43, 71, 16, "LUNAR DESCENT ABORT", "GET_MIN", "ALT_KM", "STATUS",
+     6140, 3, 43, 0, dsky::kLampOprErr | dsky::kLampProg},
+    {44, 63, 16, "PROGRAM ALARM 1202", "ALARM", "RECYCLE", "STATUS", 1202,
+     1, 0, 1202, dsky::kLampOprErr | dsky::kLampKeyRel},
+    {45, 63, 16, "PROGRAM ALARM 1201", "ALARM", "RECYCLE", "STATUS", 1201,
+     1, 0, 1201, dsky::kLampOprErr | dsky::kLampKeyRel},
+    {46, 0, 16, "COMMUNICATION LOSS", "GET_MIN", "UPLINK", "STATUS", 300,
+     0, 46, 0, dsky::kLampOprErr},
+    {47, 52, 16, "IMU REALIGN", "GET_MIN", "STAR", "STATUS", 300, 1, 52,
+     0, dsky::kLampProg | dsky::kLampTracker},
+    {48, 0, 16, "MANUAL ATTITUDE", "GET_MIN", "RHC", "STATUS", 300, 99,
+     48, 0, dsky::kLampProg | dsky::kLampKeyRel},
+};
+
 EntryMode entryMode = EntryMode::Idle;
 UsbOutputMode usbOutputMode = UsbOutputMode::Clean;
 LaunchMode launchMode = LaunchMode::Off;
@@ -102,6 +170,8 @@ int16_t launchVelocityMs = 0;
 uint8_t launchTimeScale = kLaunchDefaultTimeScale;
 int8_t lastLaunchEventIndex = -1;
 char launchPhase[24] = "IDLE";
+int8_t activeMissionScenarioIndex = -1;
+uint32_t missionScenarioLampMask = 0;
 
 struct JoystickState {
   int rawX = 0;
@@ -207,8 +277,32 @@ void calibrateJoystick() {
   sampleJoystick();
 }
 
+const MissionScenario* activeMissionScenario() {
+  if (activeMissionScenarioIndex < 0) {
+    return nullptr;
+  }
+
+  return &kMissionScenarios[activeMissionScenarioIndex];
+}
+
+int8_t missionScenarioIndexForNoun(uint8_t noun) {
+  for (uint8_t i = 0;
+       i < sizeof(kMissionScenarios) / sizeof(kMissionScenarios[0]); ++i) {
+    if (kMissionScenarios[i].noun == noun) {
+      return static_cast<int8_t>(i);
+    }
+  }
+
+  return -1;
+}
+
+void clearMissionScenario() {
+  activeMissionScenarioIndex = -1;
+  missionScenarioLampMask = 0;
+}
+
 void syncLamps() {
-  state.lampMask = manualLampMask | launchLampMask;
+  state.lampMask = manualLampMask | launchLampMask | missionScenarioLampMask;
   dsky::setLamp(&state, dsky::kLampProg, entryMode != EntryMode::Idle);
   dsky::setLamp(&state, dsky::kLampOprErr,
                 agcCore.readErasable(agc::Core::kPanelAlarm) != 0 ||
@@ -241,6 +335,14 @@ void refreshDskyFromCore() {
                   agc::Core::fromInt(launchAltitudeKm));
     formatAgcWord(state.r3, sizeof(state.r3),
                   agc::Core::fromInt(launchVelocityMs));
+  } else if (activeMissionScenario() != nullptr) {
+    const MissionScenario* scenario = activeMissionScenario();
+    formatAgcWord(state.r1, sizeof(state.r1),
+                  agc::Core::fromInt(scenario->r1));
+    formatAgcWord(state.r2, sizeof(state.r2),
+                  agc::Core::fromInt(scenario->r2));
+    formatAgcWord(state.r3, sizeof(state.r3),
+                  agc::Core::fromInt(scenario->r3));
   } else {
     formatAgcWord(state.r1, sizeof(state.r1),
                   agcCore.readErasable(agc::Core::kPanelCounter));
@@ -254,7 +356,9 @@ void refreshDskyFromCore() {
       10000);
   state.missionSeconds =
       launchMode == LaunchMode::Off
-          ? agcCore.cycles() / 1024UL
+          ? (activeMissionScenario() == nullptr
+                 ? agcCore.cycles() / 1024UL
+                 : static_cast<uint32_t>(activeMissionScenario()->r1) * 60UL)
           : static_cast<uint32_t>(launchSecond > 0 ? launchSecond : 0);
   syncLamps();
   stateDirty = true;
@@ -419,6 +523,28 @@ void printLaunchTime(Stream& port, int16_t second) {
   port.print(seconds);
 }
 
+void printTwoDigits(Stream& port, uint8_t value) {
+  if (value < 10) {
+    port.print('0');
+  }
+  port.print(value);
+}
+
+void printFourDigits(Stream& port, uint16_t value) {
+  value %= 10000;
+
+  if (value < 1000) {
+    port.print('0');
+  }
+  if (value < 100) {
+    port.print('0');
+  }
+  if (value < 10) {
+    port.print('0');
+  }
+  port.print(value);
+}
+
 void emitLaunchStatus(Stream& port) {
   port.print(F("LAUNCH "));
   printLaunchTime(port, launchSecond);
@@ -437,7 +563,91 @@ void emitLaunchStatus(Stream& port) {
   port.println(launchMode == LaunchMode::Complete ? F(" COMPLETE") : F(""));
 }
 
+void clearLaunchState() {
+  launchMode = LaunchMode::Off;
+  launchLampMask = 0;
+  lastLaunchEventIndex = -1;
+  dsky::copyField(launchPhase, sizeof(launchPhase), "IDLE");
+}
+
+void configureMissionDisplay(const MissionScenario& scenario) {
+  setCoreDisplayRegister(agc::Core::kPanelProgram, scenario.program);
+  setCoreDisplayRegister(agc::Core::kPanelVerb, scenario.verb);
+  setCoreDisplayRegister(agc::Core::kPanelNoun, scenario.noun);
+  agcCore.writeErasable(
+      agc::Core::kPanelAlarm,
+      agc::Core::fromInt(static_cast<int16_t>(scenario.alarm)));
+  state.flashVerbNoun = scenario.alarm != 0;
+}
+
+void emitMissionStatus(Stream& port) {
+  const MissionScenario* scenario = activeMissionScenario();
+  if (scenario == nullptr) {
+    port.println(F("APOLLO11 IDLE"));
+    return;
+  }
+
+  port.print(F("APOLLO11 N"));
+  printTwoDigits(port, scenario->noun);
+  port.print(F(" P"));
+  printTwoDigits(port, scenario->program);
+  port.print(F(" V"));
+  printTwoDigits(port, scenario->verb);
+  port.print(F(" "));
+  port.print(scenario->label);
+  port.print(F(" | "));
+  port.print(scenario->r1Label);
+  port.print(' ');
+  port.print(scenario->r1);
+  port.print(F(" | "));
+  port.print(scenario->r2Label);
+  port.print(' ');
+  port.print(scenario->r2);
+  port.print(F(" | "));
+  port.print(scenario->r3Label);
+  port.print(' ');
+  port.print(scenario->r3);
+  port.print(F(" | ALM "));
+  printFourDigits(port, scenario->alarm);
+  port.println();
+}
+
+void printMissionCommandList(Stream& port) {
+  port.println(F("Apollo 11 mission commands:"));
+  port.println(F("  V37 N00 ENTR  STOP / P00"));
+  port.println(F("  V37 N11 ENTR  LAUNCH ASCENT x20"));
+  port.println(F("  V37 N12 ENTR  LAUNCH ASCENT x1"));
+
+  for (uint8_t i = 0;
+       i < sizeof(kMissionScenarios) / sizeof(kMissionScenarios[0]); ++i) {
+    port.print(F("  V37 N"));
+    printTwoDigits(port, kMissionScenarios[i].noun);
+    port.print(F(" ENTR  "));
+    port.println(kMissionScenarios[i].label);
+  }
+}
+
+void activateMissionScenario(uint8_t noun) {
+  const int8_t index = missionScenarioIndexForNoun(noun);
+  if (index < 0) {
+    raiseAlarm(1106);
+    Serial.print(F("Unknown Apollo 11 mission noun: "));
+    printTwoDigits(Serial, noun);
+    Serial.println();
+    return;
+  }
+
+  clearLaunchState();
+  activeMissionScenarioIndex = index;
+  const MissionScenario& scenario = kMissionScenarios[index];
+  missionScenarioLampMask = scenario.lampMask;
+  configureMissionDisplay(scenario);
+  refreshDskyFromCore();
+  emitMissionStatus(Serial);
+}
+
 void startLaunchSimulation() {
+  clearMissionScenario();
   launchMode = LaunchMode::Running;
   launchStartMs = millis();
   lastLaunchMonitorMs = 0;
@@ -453,10 +663,7 @@ void startLaunchSimulation() {
 }
 
 void stopLaunchSimulation(bool resetPanel) {
-  launchMode = LaunchMode::Off;
-  launchLampMask = 0;
-  lastLaunchEventIndex = -1;
-  dsky::copyField(launchPhase, sizeof(launchPhase), "IDLE");
+  clearLaunchState();
 
   if (resetPanel) {
     setCoreDisplayRegister(agc::Core::kPanelProgram, 0);
@@ -466,6 +673,21 @@ void stopLaunchSimulation(bool resetPanel) {
 
   refreshDskyFromCore();
   Serial.println(F("Apollo 11 launch simulation stopped."));
+}
+
+void stopApollo11MissionProgram(bool resetPanel) {
+  clearMissionScenario();
+  clearLaunchState();
+
+  if (resetPanel) {
+    setCoreDisplayRegister(agc::Core::kPanelProgram, 0);
+    setCoreDisplayRegister(agc::Core::kPanelVerb, 16);
+    setCoreDisplayRegister(agc::Core::kPanelNoun, 36);
+  }
+
+  clearAlarm();
+  refreshDskyFromCore();
+  Serial.println(F("Apollo 11 mission program stopped."));
 }
 
 void setLaunchTimeScale(uint8_t scale) {
@@ -537,27 +759,38 @@ void updateLaunchSimulation() {
   lastLaunchMonitorMs = now;
 }
 
+void executeApollo11MissionNoun(uint8_t noun) {
+  if (noun == 0) {
+    stopApollo11MissionProgram(true);
+    return;
+  }
+
+  if (noun == 11) {
+    setLaunchTimeScale(kLaunchDefaultTimeScale);
+    startLaunchSimulation();
+    return;
+  }
+
+  if (noun == 12) {
+    setLaunchTimeScale(1);
+    startLaunchSimulation();
+    return;
+  }
+
+  activateMissionScenario(noun);
+}
+
 void handleDskyEnterCommand() {
   const uint8_t verb =
       clampDisplayCode(agcCore.readErasable(agc::Core::kPanelVerb));
   const uint8_t noun =
       clampDisplayCode(agcCore.readErasable(agc::Core::kPanelNoun));
 
-  if (verb == 37 && noun == 11) {
-    startLaunchSimulation();
+  if (verb != 37) {
     return;
   }
 
-  if (verb == 37 && noun == 0) {
-    stopLaunchSimulation(true);
-    return;
-  }
-
-  if (verb == 37 && noun == 12) {
-    setLaunchTimeScale(1);
-    startLaunchSimulation();
-    return;
-  }
+  executeApollo11MissionNoun(noun);
 }
 
 void endEntry() {
@@ -740,28 +973,6 @@ const __FlashStringHelper* runStateText() {
   return F("?");
 }
 
-void printTwoDigits(Stream& port, uint8_t value) {
-  if (value < 10) {
-    port.print('0');
-  }
-  port.print(value);
-}
-
-void printFourDigits(Stream& port, uint16_t value) {
-  value %= 10000;
-
-  if (value < 1000) {
-    port.print('0');
-  }
-  if (value < 100) {
-    port.print('0');
-  }
-  if (value < 10) {
-    port.print('0');
-  }
-  port.print(value);
-}
-
 void printSignedFour(Stream& port, int value) {
   if (value < 0) {
     port.print('-');
@@ -831,6 +1042,24 @@ void emitCleanStatus(Stream& port) {
     port.print(launchVelocityMs);
     port.print(F("m/s x"));
     port.print(launchTimeScale);
+  } else if (activeMissionScenario() != nullptr) {
+    const MissionScenario* scenario = activeMissionScenario();
+    port.print(F(" | MSN N"));
+    printTwoDigits(port, scenario->noun);
+    port.print(' ');
+    port.print(scenario->label);
+    port.print(F(" | "));
+    port.print(scenario->r1Label);
+    port.print(' ');
+    port.print(scenario->r1);
+    port.print(F(" | "));
+    port.print(scenario->r2Label);
+    port.print(' ');
+    port.print(scenario->r2);
+    port.print(F(" | "));
+    port.print(scenario->r3Label);
+    port.print(' ');
+    port.print(scenario->r3);
   }
   port.println();
 }
@@ -874,6 +1103,8 @@ void handleConsoleCommand(char* line) {
     Serial.println(F("  POKE,<octal-address>,<octal-word>"));
     Serial.println(F("  JOY JOYCAL"));
     Serial.println(F("  STATUS"));
+    Serial.println(F("  APOLLO11,LIST APOLLO11,STATUS APOLLO11,STOP"));
+    Serial.println(F("  APOLLO11,<noun> or MISSION,<noun>"));
     Serial.println(F("  LAUNCH LAUNCH,STOP LAUNCH,STATUS"));
     Serial.println(F("  LAUNCH,SPEED,<1-100> LAUNCH,REALTIME"));
     Serial.println(F("  USB,CLEAN USB,RAW USB,BOTH USB,QUIET"));
@@ -901,10 +1132,8 @@ void handleConsoleCommand(char* line) {
   }
 
   if (strcmp(line, "RESET") == 0) {
-    launchMode = LaunchMode::Off;
-    launchLampMask = 0;
-    lastLaunchEventIndex = -1;
-    dsky::copyField(launchPhase, sizeof(launchPhase), "IDLE");
+    clearMissionScenario();
+    clearLaunchState();
     agcCore.reset();
     agcCore.start();
     state.flashVerbNoun = false;
@@ -958,6 +1187,40 @@ void handleConsoleCommand(char* line) {
     calibrateJoystick();
     refreshDskyFromCore();
     emitJoystickStatus(Serial);
+    return;
+  }
+
+  if (strcmp(line, "APOLLO11,LIST") == 0 ||
+      strcmp(line, "MISSION,LIST") == 0) {
+    printMissionCommandList(Serial);
+    return;
+  }
+
+  if (strcmp(line, "APOLLO11,STATUS") == 0 ||
+      strcmp(line, "MISSION,STATUS") == 0) {
+    if (launchMode != LaunchMode::Off) {
+      emitLaunchStatus(Serial);
+    } else {
+      emitMissionStatus(Serial);
+    }
+    return;
+  }
+
+  if (strcmp(line, "APOLLO11,STOP") == 0 ||
+      strcmp(line, "MISSION,STOP") == 0) {
+    stopApollo11MissionProgram(true);
+    return;
+  }
+
+  if (strncmp(line, "APOLLO11,", 9) == 0) {
+    executeApollo11MissionNoun(
+        static_cast<uint8_t>(strtoul(line + 9, nullptr, 10)));
+    return;
+  }
+
+  if (strncmp(line, "MISSION,", 8) == 0) {
+    executeApollo11MissionNoun(
+        static_cast<uint8_t>(strtoul(line + 8, nullptr, 10)));
     return;
   }
 

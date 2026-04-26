@@ -9,6 +9,8 @@ Este manual explica como rodar a simulacao de lancamento usando:
 
 Importante: esta simulacao ainda nao e o software Comanche real executando uma rope completa. Ela e um `Launch Monitor`: uma camada de missao que faz o DSKY passar por eventos principais do ascento Apollo 11 enquanto o AGC core embarcado continua rodando.
 
+Para os comandos de missao completa alem do lancamento, veja `APOLLO11_MISSION_PROGRAM.md`.
+
 ## Arquivos usados
 
 - `embedded/esp32_agc_core/esp32_agc_core.ino`: AGC core no ESP32 e simulacao de lancamento

@@ -25,6 +25,7 @@ What is implemented now:
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
 - an Apollo 11 launch/ascent monitor simulation for first DSKY mission tests
+- an Apollo 11 mission command layer with DSKY commands for major nominal and abort situations
 - an `ESP8266` DSKY slave with a Wi-Fi browser interface for the first bench test
 - a `Mega` starter that scans buttons, drives lamps, and mirrors state to an LCD
 
@@ -35,6 +36,8 @@ The ESP32 core currently runs a tiny AGC bring-up program that increments an era
 - `shared/agc_core.h`: first AGC CPU/memory layer
 - `shared/dsky_protocol.h`: protocol, key definitions, lamp bits, frame parsing
 - `esp32_agc_core/esp32_agc_core.ino`: ESP32 AGC core shell
+- `APOLLO11_MISSION_PROGRAM.md`: command table for the Apollo 11 mission program layer
+- `LAUNCH_SIMULATION_MANUAL.md`: launch simulation operating manual
 - `esp8266_dsky_slave/esp8266_dsky_slave.ino`: ESP8266 DSKY slave, serial bridge, and web server
 - `esp8266_dsky_slave/web_dsky_page.h`: embedded browser DSKY page served by the ESP8266
 - `esp8266_dsky_slave/wifi_config.h.example`: optional local Wi-Fi config template
@@ -112,6 +115,8 @@ N
 ## Apollo 11 Launch Simulation
 
 The ESP32 has a first launch monitor simulation for bench testing the DSKY flow. It is not yet the real Comanche rope running the Saturn V ascent. It is a mission sequencer that drives DSKY displays and serial status through major Apollo 11 ascent events: terminal count, liftoff, roll program, Max-Q, staging, S-IVB burn, and parking orbit insertion.
+
+Full Apollo 11 mission command table: `APOLLO11_MISSION_PROGRAM.md`.
 
 Full Portuguese operating manual: `LAUNCH_SIMULATION_MANUAL.md`.
 
