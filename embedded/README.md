@@ -29,9 +29,9 @@ What is implemented now:
 - 9-bit AGC I/O channels, including the `L`/`Q` channel aliases and `SUPERBNK` bank-selection bit
 - MCT-based instruction cycle accounting for core execution and scheduled peripheral timing
 - Block II interrupt-vector mapping for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
-- timer/counter pulses for `TIME1..TIME6`, uplink shift counters, `DOWNRUPT`, keyrupt, and downlink channel monitoring
-- a desktop yaAGC validation path that now passes 4096 CPU-only Comanche055 rows and 8192 faithful hardware-timing rows
-- a first machine-cycle timing layer for scaler steals, timer counter pulses, interrupt-entry rows, and channel-10 DSKY output-row latches
+- timer/counter pulses for `TIME1..TIME6`, `DOWNRUPT`, keyrupt, and downlink channel monitoring
+- a desktop yaAGC validation path that now passes 4096 CPU-only Comanche055 rows and 131072 faithful hardware-timing rows
+- a first machine-cycle timing layer for scaler steals, timer counter pulses, interrupt-entry rows, channel-10 DSKY output-row latches, channel `034/035` downrupt scheduling, uplink `INLINK`/`UPRUPT`, channel-13 radar/hand-controller traps, and channel-77 restart-monitor latches
 - physics-inspired mission telemetry helpers for ascent, coast, orbit, descent, and reentry
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
@@ -42,12 +42,12 @@ What is implemented now:
 - an `ESP8266` DSKY slave with a Wi-Fi browser interface for the first bench test
 - a `Mega` starter that scans buttons, drives lamps, and mirrors state to an LCD
 
-The ESP32 core can load the generated Comanche rope image, but full mission execution still depends on expanding the yaAGC validation window around downrupt, uplink/downlink, restart/watchdog, and peripheral interleaving behavior.
+The ESP32 core can load the generated Comanche rope image, and the first real timing/peripheral trap layer now runs in both the desktop harness and the ESP32 loop. Full mission execution still depends on extending validation beyond the current windows, replacing placeholder peripheral data with faithful device models, and proving mission-length Comanche/Luminary behavior against yaAGC/VirtualAGC.
 
 ## Folder layout
 
 - `shared/agc_core.h`: first AGC CPU/memory layer
-- `shared/agc_machine_timing.h`: yaAGC-aligned scaler/counter/interrupt-entry timing layer for trace validation
+- `shared/agc_machine_timing.h`: yaAGC-aligned scaler/counter/interrupt-entry/downrupt/uplink/radar/trap timing layer for trace validation
 - `shared/agc_peripherals.h`: deterministic keyrupt/downrupt/downlink peripheral model
 - `shared/dsky_protocol.h`: protocol, key definitions, lamp bits, frame parsing
 - `shared/mission_physics.h`: lightweight mission telemetry model
@@ -72,7 +72,7 @@ The ESP32 core can load the generated Comanche rope image, but full mission exec
 
 Each Arduino sketch folder also contains local copies of the headers it needs. This is intentional: the Arduino IDE compiles a sketch folder as a standalone unit, so includes like `../shared/dsky_protocol.h` may fail when the sketch is opened directly.
 
-When changing `shared/agc_core.h` or `shared/agc_peripherals.h`, sync the matching copies in `esp32_agc_core/` before opening the sketch in the Arduino IDE.
+When changing `shared/agc_core.h`, `shared/agc_machine_timing.h`, or `shared/agc_peripherals.h`, sync the matching copies in `esp32_agc_core/` before opening the sketch in the Arduino IDE.
 
 ## First Test Wiring: ESP32 + ESP8266
 
@@ -190,13 +190,14 @@ After a real yaYUL build, `ROPE,LOAD` loads the generated `rope_image.h`; check 
 
 By default, the PC USB serial uses clean output only. The DSKY UART still receives raw `STATE,...` frames.
 
-The peripheral layer counts scheduled `KEYRUPT`/`DOWNRUPT` events and downlink changes by default. Use `PERIPH,IRQON` only when you want those scheduled peripheral events to request AGC core interrupts; the default keeps the bring-up loop stable while real interrupt handlers are still incomplete.
+The machine-timing layer now owns faithful scaler/counter steals, downrupt timing, radar/hand-controller traps, and restart-monitor counts. The higher-level peripheral layer still queues DSKY keys and captures downlink changes; `PERIPH,IRQON` lets queued keys request AGC interrupts during bench tests.
 
 Useful ESP32 USB commands:
 
 - `HELP`
 - `STATUS`
 - `CORE`
+- `TIMING`
 - `ROPE,INFO`
 - `ROPE,LOAD`
 - `PERIPH`
@@ -205,6 +206,7 @@ Useful ESP32 USB commands:
 - `PERIPH,IRQOFF`
 - `DOWNLINK`
 - `UPKEY,<key-name-or-octal-word>`
+- `UPLINK,<octal-word>`
 - `CHAN,<octal-channel>`
 - `CHAN,<octal-channel>,<octal-word>`
 - `IRQ,<0-9>`
@@ -361,7 +363,7 @@ STATE,0,16,36,+00012,+00034,+00056,1202,1,96,1234
 This is not yet:
 
 - a bundled `yaYUL` executable
-- a historically faithful Block II AGC CPU
+- a mission-length validated Block II AGC with complete peripheral physics
 - a complete `PINBALL` implementation
 - high-fidelity IMU/CDU/radar/propulsion physics
 
@@ -369,7 +371,7 @@ Those are the next layers.
 
 ## Next milestones
 
-1. Replace the bring-up program with a `yaYUL` rope image and test the exact opcodes it reaches.
-2. Tighten Block II instruction semantics, interrupt timing, and I/O channel behavior against the original AGC docs.
+1. Extend faithful Comanche/Luminary trace windows beyond 131072 rows and save the first mismatch as the next work item.
+2. Replace placeholder radar/uplink/downlink values with faithful device data sources and electrical timing.
 3. Move the Mega LCD from temporary debug display toward a more DSKY-like numeric display.
 4. Expand the lamp set and key handling to track real `PINBALL` behavior more closely.

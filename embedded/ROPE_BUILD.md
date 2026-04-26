@@ -77,6 +77,8 @@ py embedded\tools\rope_to_header.py path\to\rope_dump.bin embedded\esp32_agc_cor
 ROPE,INFO
 ROPE,LOAD
 CORE
+TIMING
+UPLINK,<octal-word>
 ```
 
 `ROPE,INFO` prints the embedded image name, bank count, and word count.
@@ -137,7 +139,7 @@ That command:
 - generates an ignored local `embedded/tests/agc_trace_real_candidate.csv` from the embedded core's `embedded/esp32_agc_core/rope_image.h`
 - compares both traces and prints the first mismatching columns without failing the whole run
 
-The default real-rope comparison is intentionally faithful to yaAGC's hardware timing. It enables the embedded machine-timing layer for scaler steals, `TIME1..TIME6` counter pulses, interrupt-entry rows, and the channel-10 DSKY output latch model. The checked-in faithful reference currently validates 8192 real Comanche055 trace rows with all columns matching.
+The default real-rope comparison is intentionally faithful to yaAGC's hardware timing. It enables the embedded machine-timing layer for scaler steals, `TIME1..TIME6` counter pulses, interrupt-entry rows, channel-10 DSKY output-row latching, channel `034/035` downrupt scheduling, `UPRUPT`/`INLINK`, channel-13 radar and hand-controller traps, and first-pass channel-77 restart-monitor latches. The checked-in faithful reference currently validates 131072 real Comanche055 trace rows with all columns matching.
 
 For opcode and CPU-state validation without scaler/downrupt interference, run CPU-only mode:
 
@@ -155,7 +157,7 @@ powershell -ExecutionPolicy Bypass -File embedded\tools\run_agc_trace_validation
 powershell -ExecutionPolicy Bypass -File embedded\tools\compare_agc_trace.ps1 -CandidateTrace embedded\tests\agc_trace_real_candidate.csv -ReferenceTrace embedded\tests\agc_trace_real_yaagc.csv -AllowMismatch -MaxMismatches 20
 ```
 
-At this stage mismatches beyond the checked validation windows are still expected: the embedded core now has executable first-pass opcode, edit-register, scaler, interrupt-entry, downrupt, and channel behavior, while yaAGC remains the historical reference. The useful artifact is the first mismatch location; it tells us exactly which semantic layer to tighten next.
+At this stage mismatches beyond the checked validation windows are still expected: the embedded core now has executable first-pass opcode, edit-register, scaler, interrupt-entry, downrupt/uplink, restart-monitor, radar, hand-controller, and channel behavior, while yaAGC remains the historical reference. The useful artifact is the first mismatch location; it tells us exactly which semantic layer to tighten next.
 
 ## Current emulator status
 
@@ -169,12 +171,15 @@ The core now has:
 - channel `010` DSKY output-row latching compatible with yaAGC's `OutputChannel10[16]`
 - Block II interrupt vectors for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
 - trace-visible interrupt-entry rows that save `ZRUPT/BRUPT` before executing the vector
-- MCT-driven counter pulses for `TIME1..TIME6`, uplink shifting, keyrupt, and scheduled downrupt/downlink tests
-- yaAGC-style machine timing for scaler overflows, pre-instruction steals, in-instruction extra-delay folding, and `TIME1..TIME6` pulses
+- MCT-driven counter pulses for `TIME1..TIME6`, keyrupt input service, hardware downrupt scheduling after channel `034/035`, and downlink channel monitoring
+- yaAGC-style machine timing for scaler overflows, pre-instruction steals, in-instruction extra-delay folding, `TIME1..TIME6` pulses, and interrupt-entry timing rows
+- first-pass `UPRUPT`/`INLINK` support through channel `0173` command input and erasable register `00045`
+- first-pass channel-13 radar activity and hand-controller trap behavior for `RADAR` and `HANDRUPT`
+- first-pass channel-77 restart-monitor/GOJAM latches for TC-trap, rupt-lock, and Night Watchman watchdog paths
 - read-side and write-side editing behavior for `CYR`, `SR`, `CYL`, and `EDOP`
 - ones-complement `INDEX` instruction addition, including the `-0` case
 - expanded basic/extracode execution for `DAS`, `LXCH`, `INCR`, `ADS`, `DXCH`, `TS`, `XCH`, `TC Q`, `BZF`, `BZMF`, `MSU`, `QXCH`, `AUG`, `DIM`, `DCA`, `DCS`, `SU`, `MP`, and the channel logic instructions
 - a yaAGC reference trace path that passes 4096 CPU-only Comanche055 instructions against the embedded core
-- a yaAGC faithful hardware-timing trace path that passes 8192 Comanche055 rows against the embedded core
+- a yaAGC faithful hardware-timing trace path that passes 131072 Comanche055 rows against the embedded core
 
-This is still not enough to claim a complete native AGC. The CPU-only opcode/channel path has a 4096-instruction yaAGC validation window and the faithful hardware-timing path has an 8192-row window, but longer traces still need systematic expansion around downrupt/uplink scheduling, restart-watchdog behavior, radar/hand controller traps, and richer peripheral interleaving.
+This is still not enough to claim a complete native AGC. The CPU-only opcode/channel path has a 4096-instruction yaAGC validation window and the faithful hardware-timing path has a 131072-row window, and the previously missing downrupt/uplink scheduling, restart-watchdog behavior, radar/hand-controller traps, and peripheral interleaving now exist as executable first-pass models. What remains before calling it "full native AGC" is historical validation beyond those windows, exact peripheral data-source modeling, restart/parity edge cases, full uplink/downlink electrical behavior, and mission-length Comanche/Luminary runs against yaAGC/VirtualAGC traces.

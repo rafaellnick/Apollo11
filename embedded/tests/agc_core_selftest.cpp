@@ -1,4 +1,5 @@
 #include "../shared/agc_core.h"
+#include "../shared/agc_machine_timing.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -22,6 +23,9 @@ int main() {
              agc::Core::kInterruptDownrupt) == 04040);
   assert(agc::Core::interruptVectorAddress(
              agc::Core::kInterruptHandrupt) == 04050);
+  assert(agc::Core::kRegINLINK == 00045);
+  assert(agc::Core::kRegRNRAD == 00046);
+  assert(agc::Core::kRegOUTLINK == 00057);
 
   core.writeChannel(0010, 012345);
   assert(core.readChannel(0010) == 012345);
@@ -95,6 +99,110 @@ int main() {
   assert(counterCore.readErasable(agc::Core::kRegINLINK) == 000001);
   assert((counterCore.pendingInterruptMask() &
           (1U << agc::Core::kInterruptUprupt)) != 0);
+
+  agc::Core uplinkCore;
+  uplinkCore.receiveUplinkWord(012345);
+  assert(uplinkCore.readErasable(agc::Core::kRegINLINK) == 012345);
+  assert((uplinkCore.pendingInterruptMask() &
+          (1U << agc::Core::kInterruptUprupt)) != 0);
+  uplinkCore.receiveUplinkWord(023456);
+  assert((uplinkCore.readChannel(0033) &
+          agc::Core::kChannel33UplinkTooFast) == 0);
+
+  agc::Core handTrapCore;
+  handTrapCore.setA(agc::Core::kChannel13Trap31A);
+  handTrapCore.writeFixed(agc::Core::kBootAddress,
+                          agc::Core::kInstructionExtend);
+  handTrapCore.writeFixed(
+      agc::Core::kBootAddress + 1,
+      static_cast<uint16_t>(001000 | agc::Core::kChannelCounterEnable));
+  handTrapCore.start();
+  assert(handTrapCore.step());
+  assert(handTrapCore.step());
+  assert((handTrapCore.readChannel(agc::Core::kChannelCounterEnable) &
+          agc::Core::kChannel13Trap31A) == 0);
+  handTrapCore.writeChannel(0031, 077700);
+  handTrapCore.serviceHandruptTraps();
+  assert((handTrapCore.pendingInterruptMask() &
+          (1U << agc::Core::kInterruptHandrupt)) != 0);
+
+  agc::Core restartCore;
+  restartCore.setRestartMonitorAlarm(agc::Core::kCh77TcTrap);
+  assert((restartCore.readChannel(agc::Core::kChannelRestartMonitor) &
+          agc::Core::kCh77TcTrap) != 0);
+  restartCore.setA(077777);
+  restartCore.writeFixed(agc::Core::kBootAddress,
+                         agc::Core::kInstructionExtend);
+  restartCore.writeFixed(
+      agc::Core::kBootAddress + 1,
+      static_cast<uint16_t>(001000 | agc::Core::kChannelRestartMonitor));
+  restartCore.start();
+  assert(restartCore.step());
+  assert(restartCore.step());
+  assert(restartCore.readChannel(agc::Core::kChannelRestartMonitor) == 0);
+  restartCore.setZ(01234);
+  restartCore.gojam(agc::Core::kCh77NightWatchman);
+  assert(restartCore.getZ() == agc::Core::kBootAddress);
+  assert(restartCore.readErasable(agc::Core::kRegQ) == 01234);
+  assert(restartCore.restartLight());
+  assert((restartCore.readChannel(agc::Core::kChannelRestartMonitor) &
+          agc::Core::kCh77NightWatchman) != 0);
+
+  agc::Core downruptCore;
+  agc::MachineTiming downruptTiming;
+  downruptTiming.setRestartMonitorsEnabled(false);
+  downruptCore.writeFixed(agc::Core::kBootAddress,
+                          agc::Core::kInstructionExtend);
+  downruptCore.writeFixed(
+      agc::Core::kBootAddress + 1,
+      static_cast<uint16_t>(001000 | agc::Core::kChannelDownlinkWord0));
+  downruptCore.writeFixed(agc::Core::kBootAddress + 2,
+                          agc::Core::kInstructionExtend);
+  downruptCore.writeFixed(
+      agc::Core::kBootAddress + 3,
+      static_cast<uint16_t>(001000 | agc::Core::kChannelDownlinkWord1));
+  downruptCore.setA(012345);
+  downruptCore.start();
+  for (uint8_t i = 0; i < 4; ++i) {
+    const uint32_t before = downruptCore.cycles();
+    assert(downruptCore.step());
+    downruptTiming.observeCpuCycles(downruptCore,
+                                    downruptCore.cycles() - before);
+    downruptTiming.observeCoreEvents(downruptCore);
+  }
+  assert(downruptTiming.downruptCount() == 0);
+  downruptCore.advanceCycles(1707);
+  downruptTiming.serviceScheduledEvents(downruptCore);
+  assert((downruptCore.pendingInterruptMask() &
+          (1U << agc::Core::kInterruptDownrupt)) != 0);
+  assert(downruptTiming.downruptCount() == 1);
+
+  agc::Core radarCore;
+  agc::MachineTiming radarTiming;
+  radarTiming.setRestartMonitorsEnabled(false);
+  radarCore.writeChannel(agc::Core::kChannelCounterEnable,
+                         agc::Core::kChannel13RadarActivity);
+  for (uint16_t i = 0; i < 12000 && radarTiming.radarRuptCount() == 0; ++i) {
+    radarCore.advanceCycles(1);
+    radarTiming.observeCpuCycles(radarCore, 1);
+  }
+  assert(radarTiming.radarRuptCount() == 1);
+  assert((radarCore.pendingInterruptMask() &
+          (1U << agc::Core::kInterruptRadarRupt)) != 0);
+  assert((radarCore.readChannel(agc::Core::kChannelCounterEnable) &
+          agc::Core::kChannel13RadarActivity) == 0);
+
+  agc::Core watchdogCore;
+  agc::MachineTiming watchdogTiming;
+  for (uint16_t i = 0; i < 3000 &&
+                       watchdogTiming.restartAlarmCount() == 0; ++i) {
+    watchdogCore.advanceCycles(1);
+    watchdogTiming.observeCpuCycles(watchdogCore, 1);
+  }
+  assert(watchdogTiming.restartAlarmCount() == 1);
+  assert(watchdogCore.restartLight());
+  assert((watchdogCore.readChannel(agc::Core::kChannelRestartMonitor) &
+          agc::Core::kCh77TcTrap) != 0);
 
   agc::Core decodeCore;
   decodeCore.writeErasable(00120, agc::Core::fromInt(42));

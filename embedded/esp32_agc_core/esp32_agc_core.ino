@@ -1,4 +1,5 @@
 #include "agc_core.h"
+#include "agc_machine_timing.h"
 #include "agc_peripherals.h"
 #include "dsky_protocol.h"
 #include "mission_physics.h"
@@ -34,6 +35,7 @@ constexpr uint8_t kLaunchDefaultTimeScale = 20;
 
 HardwareSerial panelSerial(2);
 agc::Core agcCore;
+agc::MachineTiming agcMachineTiming;
 agc::Peripherals agcPeripherals;
 dsky::State state;
 dsky::Phase phase;
@@ -458,6 +460,11 @@ int16_t telemetryValueForLabel(const MissionTelemetry& telemetry,
 }
 
 bool peripheralUplinkActive() {
+  if ((agcCore.pendingInterruptMask() &
+       (1U << agc::Core::kInterruptUprupt)) != 0) {
+    return true;
+  }
+
   if (agcPeripherals.keyQueueDepth() > 0) {
     return true;
   }
@@ -1007,6 +1014,64 @@ bool queueDskyKeyForCore(dsky::Key key) {
   return agcPeripherals.enqueueKey(dskyKeyToPeripheralWord(key));
 }
 
+void configurePeripheralModel() {
+  agc::Peripherals::Config config = agc::Peripherals::defaultConfig();
+  config.scheduleCounters = false;
+  config.scheduleDownrupt = false;
+  config.requestScheduledInterrupts = false;
+  agcPeripherals.setConfig(config);
+}
+
+void resetRuntimeModels() {
+  agcMachineTiming.reset();
+  agcPeripherals.reset(agcCore);
+}
+
+bool runCoreSlice(uint16_t maxRows) {
+  bool advanced = false;
+
+  for (uint16_t i = 0; i < maxRows &&
+                       agcCore.runState() == agc::Core::RunState::Running;
+       ++i) {
+    agcMachineTiming.serviceScheduledEvents(agcCore);
+
+    const uint16_t stallMct = agcMachineTiming.consumeStallCycles(agcCore);
+    if (stallMct > 0) {
+      advanced = true;
+      continue;
+    }
+
+    uint16_t interruptedPc = 0;
+    uint16_t interruptedInstruction = 0;
+    if (agcCore.serviceInterruptEntry(&interruptedPc,
+                                      &interruptedInstruction)) {
+      agcCore.advanceCycles(agc::Core::kRuptEntryMct);
+      agcMachineTiming.observeCpuCycles(agcCore,
+                                        agc::Core::kRuptEntryMct);
+      agcMachineTiming.observeCoreEvents(agcCore, false);
+      advanced = true;
+      continue;
+    }
+
+    const uint32_t before = agcCore.cycles();
+    if (!agcCore.step()) {
+      return advanced;
+    }
+
+    agcMachineTiming.observeCpuCycles(agcCore, agcCore.cycles() - before);
+    agcMachineTiming.observeCoreEvents(agcCore);
+    advanced = true;
+  }
+
+  return advanced;
+}
+
+void receiveUplinkWord(uint16_t word) {
+  word &= agc::Core::kWordMask;
+  agcCore.writeChannel(agc::Core::kChannelUplink, word);
+  agcCore.receiveUplinkWord(word);
+}
+
 void handleKey(dsky::Key key) {
   writeLastKey(key);
   if (!queueDskyKeyForCore(key)) {
@@ -1138,7 +1203,11 @@ void emitCoreStatus(Stream& port) {
   port.print(F(" CH13="));
   port.print(agcCore.readChannel(agc::Peripherals::kChannelDownlink3), OCT);
   port.print(F(" KEYCH="));
-  port.println(agcCore.readChannel(agc::Peripherals::kChannelKeyInput), OCT);
+  port.print(agcCore.readChannel(agc::Peripherals::kChannelKeyInput), OCT);
+  port.print(F(" CH77="));
+  port.print(agcCore.readChannel(agc::Core::kChannelRestartMonitor), OCT);
+  port.print(F(" RSTL="));
+  port.println(agcCore.restartLight() ? 1 : 0);
 }
 
 void emitPeripheralStatus(Stream& port) {
@@ -1183,6 +1252,18 @@ void emitPeripheralStatus(Stream& port) {
   port.print(agcPeripherals.config().requestScheduledInterrupts ? 1 : 0);
   port.print(F(" LASTKEY="));
   port.print(agcPeripherals.lastKeyWord(), OCT);
+  port.print(F(" MTSCAL="));
+  port.print(agcMachineTiming.scalerOverflowCount());
+  port.print(F(" MTSTALL="));
+  port.print(agcMachineTiming.stealCycleCount());
+  port.print(F(" MTDNR="));
+  port.print(agcMachineTiming.downruptCount());
+  port.print(F(" MTRAD="));
+  port.print(agcMachineTiming.radarRuptCount());
+  port.print(F(" MTHAND="));
+  port.print(agcMachineTiming.handruptCount());
+  port.print(F(" MTRST="));
+  port.print(agcMachineTiming.restartAlarmCount());
   port.print(F(" IRQ="));
   port.println(agcCore.pendingInterruptMask(), BIN);
 }
@@ -1277,12 +1358,18 @@ void emitCleanStatus(Stream& port) {
   port.print(agcCore.getA(), OCT);
   port.print(F(" | CYC "));
   port.print(agcCore.cycles());
+  port.print(F(" | MT DNR "));
+  port.print(agcMachineTiming.downruptCount());
+  port.print(F(" RAD "));
+  port.print(agcMachineTiming.radarRuptCount());
+  port.print(F(" HAND "));
+  port.print(agcMachineTiming.handruptCount());
+  port.print(F(" RST "));
+  port.print(agcMachineTiming.restartAlarmCount());
   port.print(F(" | IO DLQ "));
   port.print(static_cast<unsigned int>(agcPeripherals.downlinkQueueDepth()));
   port.print(F(" KEYQ "));
   port.print(static_cast<unsigned int>(agcPeripherals.keyQueueDepth()));
-  port.print(F(" DNR "));
-  port.print(agcPeripherals.downruptCount());
   port.print(F(" KEYR "));
   port.print(agcPeripherals.keyruptCount());
   port.print(F(" | "));
@@ -1391,9 +1478,9 @@ void handleConsoleCommand(char* line) {
   if (strcmp(line, "HELP") == 0) {
     Serial.println(F("Commands:"));
     Serial.println(F("  KEY,<name>"));
-    Serial.println(F("  RUN HALT STEP RESET STATE CORE"));
+    Serial.println(F("  RUN HALT STEP RESET STATE CORE TIMING"));
     Serial.println(F("  PERIPH PERIPH,RESET PERIPH,IRQON PERIPH,IRQOFF"));
-    Serial.println(F("  DOWNLINK UPKEY,<name|octal>"));
+    Serial.println(F("  DOWNLINK UPKEY,<name|octal> UPLINK,<octal>"));
     Serial.println(F("  ROPE,INFO ROPE,LOAD"));
     Serial.println(F("  CHAN,<octal> CHAN,<octal>,<octal> IRQ,<0-9>"));
     Serial.println(F("  PINBALL,<noun> PINBALL,LIST"));
@@ -1423,7 +1510,7 @@ void handleConsoleCommand(char* line) {
   }
 
   if (strcmp(line, "STEP") == 0) {
-    agcCore.step();
+    runCoreSlice(1);
     agcPeripherals.tick(agcCore);
     refreshDskyFromCore();
     emitCoreStatus(Serial);
@@ -1436,7 +1523,7 @@ void handleConsoleCommand(char* line) {
     clearLaunchState();
     agcCore.reset();
     agcCore.start();
-    agcPeripherals.reset(agcCore);
+    resetRuntimeModels();
     state.flashVerbNoun = false;
     manualLampMask = 0;
     entryMode = EntryMode::Idle;
@@ -1460,13 +1547,18 @@ void handleConsoleCommand(char* line) {
     return;
   }
 
+  if (strcmp(line, "TIMING") == 0) {
+    emitPeripheralStatus(Serial);
+    return;
+  }
+
   if (strcmp(line, "PERIPH") == 0) {
     emitPeripheralStatus(Serial);
     return;
   }
 
   if (strcmp(line, "PERIPH,RESET") == 0) {
-    agcPeripherals.reset(agcCore);
+    resetRuntimeModels();
     emitPeripheralStatus(Serial);
     return;
   }
@@ -1481,6 +1573,23 @@ void handleConsoleCommand(char* line) {
 
   if (strcmp(line, "DOWNLINK") == 0) {
     emitDownlinkWords(Serial);
+    return;
+  }
+
+  if (strncmp(line, "UPLINK,", 7) == 0) {
+    if (!isOctalText(line + 7)) {
+      Serial.println(F("UPLINK expects one octal AGC word."));
+      return;
+    }
+
+    const uint16_t word = parseOctal(line + 7);
+    receiveUplinkWord(word);
+    Serial.print(F("UPLINK word="));
+    Serial.print(word, OCT);
+    Serial.print(F(" INLINK="));
+    Serial.print(agcCore.readErasable(agc::Core::kRegINLINK), OCT);
+    Serial.print(F(" IRQ="));
+    Serial.println(agcCore.pendingInterruptMask(), BIN);
     return;
   }
 
@@ -1543,7 +1652,7 @@ void handleConsoleCommand(char* line) {
 
     if (agcCore.loadRopeImage(embedded_rope::kImage)) {
       agcCore.start();
-      agcPeripherals.reset(agcCore);
+      resetRuntimeModels();
       clearMissionScenario();
       clearLaunchState();
       refreshDskyFromCore();
@@ -1789,7 +1898,8 @@ void setup() {
 
   agcCore.reset();
   agcCore.start();
-  agcPeripherals.reset(agcCore);
+  configurePeripheralModel();
+  resetRuntimeModels();
   calibrateJoystick();
   dsky::initState(&state);
   dsky::initPhase(&phase);
@@ -1814,8 +1924,7 @@ void loop() {
 
   bool coreAdvanced = false;
   if (agcCore.runState() == agc::Core::RunState::Running) {
-    agcCore.runFor(kInstructionsPerLoop);
-    coreAdvanced = true;
+    coreAdvanced = runCoreSlice(kInstructionsPerLoop);
   }
 
   const bool peripheralChanged = agcPeripherals.tick(agcCore);

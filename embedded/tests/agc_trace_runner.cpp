@@ -15,7 +15,7 @@ constexpr uint16_t kScratchSubtrahend = 00121;
 constexpr uint16_t kConstOne = 04100;
 constexpr uint16_t kConstTwo = 04101;
 constexpr uint16_t kTraceSteps = 18;
-constexpr uint16_t kRopeTraceSteps = 64;
+constexpr uint32_t kRopeTraceSteps = 64;
 
 enum class TraceMode {
   Synthetic,
@@ -24,7 +24,7 @@ enum class TraceMode {
 
 struct Options {
   TraceMode mode = TraceMode::Synthetic;
-  uint16_t steps = 0;
+  uint32_t steps = 0;
   bool hardwareTiming = false;
 };
 
@@ -97,7 +97,7 @@ TraceSnapshot makeInstructionSnapshot(const agc::Core& core, uint16_t mct) {
                            core.lastInstructionExtended(), mct);
 }
 
-void printTraceRow(const TraceSnapshot& snapshot, uint16_t step) {
+void printTraceRow(const TraceSnapshot& snapshot, uint32_t step) {
   std::cout << std::dec << step << ",";
   printOctal(snapshot.pc, 4);
   std::cout << ",";
@@ -156,18 +156,19 @@ void installTraceProgram(agc::Core& core) {
                   agc::Core::encodeBasic(0, agc::Core::kBootAddress + 020));
 }
 
-bool parseUnsigned(const char* text, uint16_t* value) {
+bool parseUnsigned(const char* text, uint32_t* value) {
   if (text == nullptr || *text == '\0') {
     return false;
   }
 
   char* end = nullptr;
   const unsigned long parsed = std::strtoul(text, &end, 10);
-  if (end == text || *end != '\0' || parsed == 0 || parsed > 65535UL) {
+  if (end == text || *end != '\0' || parsed == 0 ||
+      parsed > 10000000UL) {
     return false;
   }
 
-  *value = static_cast<uint16_t>(parsed);
+  *value = static_cast<uint32_t>(parsed);
   return true;
 }
 
@@ -228,14 +229,15 @@ int main(int argc, char** argv) {
   const bool useHardwareTiming =
       options.hardwareTiming && options.mode == TraceMode::Rope;
 
-  const uint16_t steps =
+  const uint32_t steps =
       options.steps != 0
           ? options.steps
           : (options.mode == TraceMode::Rope ? kRopeTraceSteps : kTraceSteps);
 
   printTraceHeader();
-  for (uint16_t step = 1; step <= steps; ++step) {
+  for (uint32_t step = 1; step <= steps; ++step) {
     if (useHardwareTiming) {
+      machineTiming.serviceScheduledEvents(core);
       const uint16_t pc = core.previewAddress();
       const uint16_t instruction = core.previewInstruction();
       const bool extended = core.previewInstructionExtended();
@@ -256,6 +258,7 @@ int main(int argc, char** argv) {
         machineTiming.observeCpuCycles(core, agc::Core::kRuptEntryMct);
         const uint16_t rowMct =
             static_cast<uint16_t>(core.cycles() - cyclesBefore);
+        machineTiming.observeCoreEvents(core, false);
         printTraceRow(makeTraceSnapshot(core, interruptedPc,
                                         interruptedInstruction, extended,
                                         rowMct),
@@ -269,6 +272,7 @@ int main(int argc, char** argv) {
     uint32_t rowMct = core.lastInstructionMct();
     if (useHardwareTiming) {
       machineTiming.observeCpuCycles(core, core.cycles() - cyclesBefore);
+      machineTiming.observeCoreEvents(core);
       rowMct = core.cycles() - cyclesBefore;
     }
     printTraceRow(makeInstructionSnapshot(core, static_cast<uint16_t>(rowMct)),

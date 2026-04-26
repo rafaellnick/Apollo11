@@ -64,9 +64,9 @@ class Core {
   static constexpr uint16_t kRegTIME4 = 00027;
   static constexpr uint16_t kRegTIME5 = 00030;
   static constexpr uint16_t kRegTIME6 = 00031;
-  static constexpr uint16_t kRegINLINK = 00032;
-  static constexpr uint16_t kRegRNRAD = 00033;
-  static constexpr uint16_t kRegOUTLINK = 00034;
+  static constexpr uint16_t kRegINLINK = 00045;
+  static constexpr uint16_t kRegRNRAD = 00046;
+  static constexpr uint16_t kRegOUTLINK = 00057;
 
   static constexpr uint8_t kInterruptT6Rupt = 0;
   static constexpr uint8_t kInterruptT5Rupt = 1;
@@ -104,6 +104,22 @@ class Core {
   static constexpr uint16_t kChannelCounterEnable = 0013;
   static constexpr uint16_t kChannelDownlinkWord0 = 0034;
   static constexpr uint16_t kChannelDownlinkWord1 = 0035;
+  static constexpr uint16_t kChannelRestartMonitor = 0077;
+  static constexpr uint16_t kChannelUplink = 0173;
+
+  static constexpr uint16_t kChannel13Trap31A = 004000;
+  static constexpr uint16_t kChannel13Trap31B = 010000;
+  static constexpr uint16_t kChannel13Trap32 = 020000;
+  static constexpr uint16_t kChannel13RadarActivity = 000010;
+  static constexpr uint16_t kChannel33UplinkTooFast = 002000;
+
+  static constexpr uint16_t kCh77ParityFail = 000001;
+  static constexpr uint16_t kCh77TcTrap = 000004;
+  static constexpr uint16_t kCh77RuptLock = 000010;
+  static constexpr uint16_t kCh77NightWatchman = 000020;
+
+  static constexpr uint8_t kHardwareWriteDownlinkWord0 = 1U << 0;
+  static constexpr uint8_t kHardwareWriteDownlinkWord1 = 1U << 1;
 
   enum class RunState : uint8_t {
     Halted = 0,
@@ -136,8 +152,17 @@ class Core {
     forcedInstruction_ = 0;
     interruptsEnabled_ = true;
     interruptsInhibited_ = false;
+    inInterruptService_ = false;
     pendingInterruptMask_ = 0;
     activeInterrupt_ = 0;
+    hardwareWriteFlags_ = 0;
+    tcEvent_ = false;
+    interruptEntryEvent_ = false;
+    nightWatchmanServiced_ = false;
+    trap31A_ = false;
+    trap31B_ = false;
+    trap32_ = false;
+    restartLight_ = false;
     lastInstruction_ = 0;
     lastAddress_ = 0;
     lastOpcode_ = 0;
@@ -266,6 +291,7 @@ class Core {
 
   uint16_t readErasable(uint16_t address) const {
     address &= (kErasableWords - 1);
+    noteErasableAccess(address);
     if (address == kRegZERO) {
       return 0;
     }
@@ -280,6 +306,7 @@ class Core {
   void writeErasable(uint16_t address, uint16_t value) {
     address &= (kErasableWords - 1);
     value &= kWordMask;
+    noteErasableAccess(address);
 
     if (address == kRegZERO) {
       return;
@@ -348,8 +375,17 @@ class Core {
     forcedInstruction_ = 0;
     interruptsEnabled_ = true;
     interruptsInhibited_ = false;
+    inInterruptService_ = false;
     pendingInterruptMask_ = 0;
     activeInterrupt_ = 0;
+    hardwareWriteFlags_ = 0;
+    tcEvent_ = false;
+    interruptEntryEvent_ = false;
+    nightWatchmanServiced_ = false;
+    trap31A_ = false;
+    trap31B_ = false;
+    trap32_ = false;
+    restartLight_ = false;
     lastInstruction_ = 0;
     lastAddress_ = 0;
     lastOpcode_ = 0;
@@ -388,6 +424,95 @@ class Core {
       return;
     }
     channels_[channel & (kIoChannels - 1)] = value;
+  }
+
+  uint8_t takeHardwareWriteFlags() {
+    const uint8_t flags = hardwareWriteFlags_;
+    hardwareWriteFlags_ = 0;
+    return flags;
+  }
+
+  bool takeTcEvent() {
+    const bool event = tcEvent_;
+    tcEvent_ = false;
+    return event;
+  }
+
+  bool takeInterruptEntryEvent() {
+    const bool event = interruptEntryEvent_;
+    interruptEntryEvent_ = false;
+    return event;
+  }
+
+  bool takeNightWatchmanService() const {
+    const bool serviced = nightWatchmanServiced_;
+    nightWatchmanServiced_ = false;
+    return serviced;
+  }
+
+  bool inInterruptService() const { return inInterruptService_; }
+  bool restartLight() const { return restartLight_; }
+
+  void receiveUplinkWord(uint16_t word) {
+    if ((pendingInterruptMask_ & (1U << kInterruptUprupt)) != 0) {
+      channels_[0033] &= static_cast<uint16_t>(~kChannel33UplinkTooFast);
+    }
+    writeErasable(kRegINLINK, word & kWordMask);
+    requestInterrupt(kInterruptUprupt);
+  }
+
+  void serviceHandruptTraps() {
+    if (trap31A_ && (readChannel(0031) & 000077) != 000077) {
+      trap31A_ = false;
+      requestInterrupt(kInterruptHandrupt);
+    }
+    if (trap31B_ && (readChannel(0031) & 007700) != 007700) {
+      trap31B_ = false;
+      requestInterrupt(kInterruptHandrupt);
+    }
+    if (trap32_ && (readChannel(0032) & 001777) != 001777) {
+      trap32_ = false;
+      requestInterrupt(kInterruptHandrupt);
+    }
+  }
+
+  void setRestartMonitorAlarm(uint16_t alarmBits) {
+    channels_[kChannelRestartMonitor] =
+        static_cast<uint16_t>((channels_[kChannelRestartMonitor] |
+                               (alarmBits & kWordMask)) &
+                              kWordMask);
+  }
+
+  void gojam(uint16_t alarmBits) {
+    setRestartMonitorAlarm(alarmBits);
+    writeErasable(kRegQ, getZ());
+    setZ(kBootAddress);
+    interruptsEnabled_ = true;
+    interruptsInhibited_ = false;
+    inInterruptService_ = false;
+    pendingInterruptMask_ = 0;
+    activeInterrupt_ = 0;
+    indexPending_ = false;
+    indexValue_ = 0;
+    extendPending_ = false;
+    forcedInstructionPending_ = false;
+    forcedInstruction_ = 0;
+    trap31A_ = false;
+    trap31B_ = false;
+    trap32_ = false;
+    restartLight_ = true;
+
+    writeChannel(0005, 0);
+    writeChannel(0006, 0);
+    writeChannel(0010, 0);
+    writeChannel(0011, 0);
+    writeChannel(0012, 0);
+    writeChannel(0013, 0);
+    writeChannel(0014, 0);
+    channels_[0033] |= kChannel33UplinkTooFast;
+    writeChannel(kChannelDownlinkWord0, 0);
+    writeChannel(kChannelDownlinkWord1, 0);
+    hardwareWriteFlags_ = 0;
   }
 
   void setInterruptsEnabled(bool enabled) {
@@ -442,6 +567,8 @@ class Core {
       writeErasable(kRegZRUPT, interruptedPc);
       writeErasable(kRegBRUPT, interruptedInstruction);
       interruptsInhibited_ = true;
+      inInterruptService_ = true;
+      interruptEntryEvent_ = true;
       setZ(interruptVectorAddress(i));
       if (interruptedPcOut != nullptr) {
         *interruptedPcOut = interruptedPc;
@@ -530,7 +657,7 @@ class Core {
   void setZ(uint16_t address) { writeErasable(kRegZ, address & kAddressMask); }
 
   uint32_t cycles() const { return cycles_; }
-  void advanceCycles(uint8_t mct) { cycles_ += mct; }
+  void advanceCycles(uint32_t mct) { cycles_ += mct; }
   RunState runState() const { return runState_; }
   Fault fault() const { return fault_; }
   uint16_t previewAddress() const { return getZ(); }
@@ -899,6 +1026,7 @@ class Core {
   }
 
   void executeTc(uint16_t operand) {
+    tcEvent_ = true;
     if (operand != kRegQ) {
       writeErasable(kRegQ, getZ());
     }
@@ -1011,6 +1139,18 @@ class Core {
       writeErasable(channel, value);
       return;
     }
+    if (channel == kChannelCounterEnable) {
+      if ((value & kChannel13Trap31A) != 0) {
+        trap31A_ = true;
+      }
+      if ((value & kChannel13Trap31B) != 0) {
+        trap31B_ = true;
+      }
+      if ((value & kChannel13Trap32) != 0) {
+        trap32_ = true;
+      }
+      value &= 043777;
+    }
     if (channel == kChannelDSKY) {
       outputChannel10_[(value >> 11) & 017] = value;
     }
@@ -1018,6 +1158,18 @@ class Core {
       channels_[channel] = static_cast<uint16_t>(
           (channels_[channel] | 076000) & kWordMask);
       return;
+    }
+    if (channel == kChannelRestartMonitor) {
+      writeChannel(channel, 0);
+      return;
+    }
+    if (channel == 0011 && (value & 01000) != 0) {
+      restartLight_ = false;
+    }
+    if (channel == kChannelDownlinkWord0) {
+      hardwareWriteFlags_ |= kHardwareWriteDownlinkWord0;
+    } else if (channel == kChannelDownlinkWord1) {
+      hardwareWriteFlags_ |= kHardwareWriteDownlinkWord1;
     }
     writeChannel(channel, value);
   }
@@ -1257,6 +1409,7 @@ class Core {
     forcedInstruction_ = readErasable(kRegBRUPT);
     forcedInstructionPending_ = true;
     interruptsInhibited_ = false;
+    inInterruptService_ = false;
   }
 
   void executeXch(uint16_t operand) {
@@ -1297,6 +1450,12 @@ class Core {
     runState_ = RunState::Faulted;
   }
 
+  void noteErasableAccess(uint16_t address) const {
+    if ((address & (kErasableWords - 1)) == 00067) {
+      nightWatchmanServiced_ = true;
+    }
+  }
+
   mutable uint16_t erasable_[kErasableWords];
   uint16_t fixed_[kFixedWords];
   uint16_t channels_[kIoChannels];
@@ -1311,8 +1470,17 @@ class Core {
   uint16_t forcedInstruction_ = 0;
   bool interruptsEnabled_ = true;
   bool interruptsInhibited_ = false;
+  bool inInterruptService_ = false;
   uint16_t pendingInterruptMask_ = 0;
   uint8_t activeInterrupt_ = 0;
+  uint8_t hardwareWriteFlags_ = 0;
+  bool tcEvent_ = false;
+  bool interruptEntryEvent_ = false;
+  mutable bool nightWatchmanServiced_ = false;
+  bool trap31A_ = false;
+  bool trap31B_ = false;
+  bool trap32_ = false;
+  bool restartLight_ = false;
   uint16_t lastInstruction_ = 0;
   uint16_t lastAddress_ = 0;
   uint8_t lastOpcode_ = 0;
