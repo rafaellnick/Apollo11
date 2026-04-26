@@ -30,6 +30,8 @@ What is implemented now:
 - MCT-based instruction cycle accounting for core execution and scheduled peripheral timing
 - Block II interrupt-vector mapping for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
 - timer/counter pulses for `TIME1..TIME6`, uplink shift counters, `DOWNRUPT`, keyrupt, and downlink channel monitoring
+- a desktop yaAGC validation path that now passes 4096 CPU-only Comanche055 rows and 8192 faithful hardware-timing rows
+- a first machine-cycle timing layer for scaler steals, timer counter pulses, interrupt-entry rows, and channel-10 DSKY output-row latches
 - physics-inspired mission telemetry helpers for ascent, coast, orbit, descent, and reentry
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
@@ -40,11 +42,12 @@ What is implemented now:
 - an `ESP8266` DSKY slave with a Wi-Fi browser interface for the first bench test
 - a `Mega` starter that scans buttons, drives lamps, and mirrors state to an LCD
 
-The ESP32 core currently runs a tiny AGC bring-up program that increments an erasable counter. The next layer is loading a real assembled rope image.
+The ESP32 core can load the generated Comanche rope image, but full mission execution still depends on expanding the yaAGC validation window around downrupt, uplink/downlink, restart/watchdog, and peripheral interleaving behavior.
 
 ## Folder layout
 
 - `shared/agc_core.h`: first AGC CPU/memory layer
+- `shared/agc_machine_timing.h`: yaAGC-aligned scaler/counter/interrupt-entry timing layer for trace validation
 - `shared/agc_peripherals.h`: deterministic keyrupt/downrupt/downlink peripheral model
 - `shared/dsky_protocol.h`: protocol, key definitions, lamp bits, frame parsing
 - `shared/mission_physics.h`: lightweight mission telemetry model

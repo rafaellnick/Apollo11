@@ -376,6 +376,10 @@ class Core {
     return channels_[channel & (kIoChannels - 1)] & kWordMask;
   }
 
+  uint16_t readOutputChannel10(uint8_t row) const {
+    return outputChannel10_[row & 017] & kWordMask;
+  }
+
   void writeChannel(uint16_t channel, uint16_t value) {
     channel &= kIoAddressMask;
     value &= kWordMask;
@@ -404,6 +408,51 @@ class Core {
       pendingInterruptMask_ &=
           static_cast<uint16_t>(~static_cast<uint16_t>(1U << interruptNumber));
     }
+  }
+
+  bool serviceInterruptEntry(uint16_t* interruptedPcOut = nullptr,
+                             uint16_t* interruptedInstructionOut = nullptr) {
+    if (!interruptsEnabled_ || interruptsInhibited_ ||
+        pendingInterruptMask_ == 0 || extendPending_ ||
+        forcedInstructionPending_) {
+      return false;
+    }
+
+    const uint16_t interruptedPc = getZ();
+    uint16_t interruptedInstruction = read(interruptedPc);
+    if (!indexPending_ &&
+        isInterruptBoundaryInstruction(interruptedInstruction)) {
+      return false;
+    }
+
+    for (uint8_t i = 0; i < kInterruptCount; ++i) {
+      if ((pendingInterruptMask_ & (1U << i)) == 0) {
+        continue;
+      }
+
+      pendingInterruptMask_ &=
+          static_cast<uint16_t>(~static_cast<uint16_t>(1U << i));
+      activeInterrupt_ = i;
+      if (indexPending_) {
+        interruptedInstruction =
+            applyIndex(interruptedInstruction, indexValue_);
+        indexPending_ = false;
+        indexValue_ = 0;
+      }
+      writeErasable(kRegZRUPT, interruptedPc);
+      writeErasable(kRegBRUPT, interruptedInstruction);
+      interruptsInhibited_ = true;
+      setZ(interruptVectorAddress(i));
+      if (interruptedPcOut != nullptr) {
+        *interruptedPcOut = interruptedPc;
+      }
+      if (interruptedInstructionOut != nullptr) {
+        *interruptedInstructionOut = interruptedInstruction;
+      }
+      return true;
+    }
+
+    return false;
   }
 
   uint16_t pendingInterruptMask() const { return pendingInterruptMask_; }
@@ -481,8 +530,19 @@ class Core {
   void setZ(uint16_t address) { writeErasable(kRegZ, address & kAddressMask); }
 
   uint32_t cycles() const { return cycles_; }
+  void advanceCycles(uint8_t mct) { cycles_ += mct; }
   RunState runState() const { return runState_; }
   Fault fault() const { return fault_; }
+  uint16_t previewAddress() const { return getZ(); }
+  uint16_t previewInstruction() const {
+    uint16_t instruction =
+        forcedInstructionPending_ ? forcedInstruction_ : read(getZ());
+    if (indexPending_) {
+      instruction = applyIndex(instruction, indexValue_);
+    }
+    return instruction & kWordMask;
+  }
+  bool previewInstructionExtended() const { return extendPending_; }
   uint16_t lastInstruction() const { return lastInstruction_; }
   uint16_t lastAddress() const { return lastAddress_; }
   uint8_t lastOpcode() const { return lastOpcode_; }
@@ -544,10 +604,7 @@ class Core {
   }
 
   static uint16_t applyIndex(uint16_t instruction, uint16_t indexValue) {
-    const uint16_t opcode = instruction & 070000;
-    const uint16_t operand =
-        static_cast<uint16_t>((instruction + indexValue) & kAddressMask);
-    return static_cast<uint16_t>(opcode | operand);
+    return addOnesComplement(instruction, indexValue);
   }
 
   static SignClass classify(uint16_t word) {
@@ -609,6 +666,7 @@ class Core {
 
   void initializeChannels() {
     memset(channels_, 0, sizeof(channels_));
+    memset(outputChannel10_, 0, sizeof(outputChannel10_));
     channels_[0030] = 037777;
     channels_[0031] = kWordMask;
     channels_[0032] = kWordMask;
@@ -873,7 +931,7 @@ class Core {
           resumeFromInterrupt();
         } else {
           indexPending_ = true;
-          indexValue_ = read(address10(instruction)) & kAddressMask;
+          indexValue_ = read(address10(instruction)) & kWordMask;
         }
         break;
       case 1:
@@ -953,6 +1011,9 @@ class Core {
       writeErasable(channel, value);
       return;
     }
+    if (channel == kChannelDSKY) {
+      outputChannel10_[(value >> 11) & 017] = value;
+    }
     if (channel == 0033) {
       channels_[channel] = static_cast<uint16_t>(
           (channels_[channel] | 076000) & kWordMask);
@@ -993,7 +1054,7 @@ class Core {
         break;
       case 5:
         indexPending_ = true;
-        indexValue_ = read(operand) & kAddressMask;
+        indexValue_ = read(operand) & kWordMask;
         extendPending_ = true;
         break;
       case 6:
@@ -1188,41 +1249,7 @@ class Core {
   }
 
   bool serviceInterrupt() {
-    if (!interruptsEnabled_ || interruptsInhibited_ ||
-        pendingInterruptMask_ == 0 || extendPending_ ||
-        forcedInstructionPending_) {
-      return false;
-    }
-
-    const uint16_t interruptedPc = getZ();
-    uint16_t interruptedInstruction = read(interruptedPc);
-    if (!indexPending_ &&
-        isInterruptBoundaryInstruction(interruptedInstruction)) {
-      return false;
-    }
-
-    for (uint8_t i = 0; i < kInterruptCount; ++i) {
-      if ((pendingInterruptMask_ & (1U << i)) == 0) {
-        continue;
-      }
-
-      pendingInterruptMask_ &=
-          static_cast<uint16_t>(~static_cast<uint16_t>(1U << i));
-      activeInterrupt_ = i;
-      if (indexPending_) {
-        interruptedInstruction =
-            applyIndex(interruptedInstruction, indexValue_);
-        indexPending_ = false;
-        indexValue_ = 0;
-      }
-      writeErasable(kRegZRUPT, interruptedPc);
-      writeErasable(kRegBRUPT, interruptedInstruction);
-      interruptsInhibited_ = true;
-      setZ(interruptVectorAddress(i));
-      return true;
-    }
-
-    return false;
+    return serviceInterruptEntry();
   }
 
   void resumeFromInterrupt() {
@@ -1273,6 +1300,7 @@ class Core {
   mutable uint16_t erasable_[kErasableWords];
   uint16_t fixed_[kFixedWords];
   uint16_t channels_[kIoChannels];
+  uint16_t outputChannel10_[16];
   RunState runState_ = RunState::Halted;
   Fault fault_ = Fault::None;
   uint32_t cycles_ = 0;

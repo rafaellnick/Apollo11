@@ -7,7 +7,7 @@ The local Apollo 11 source directories are already in yaYUL's expected shape:
 - `Comanche055/MAIN.agc` includes the Command Module source files.
 - `Luminary099/MAIN.agc` includes the Lunar Module source files.
 
-The workspace does not currently contain a working local `yaYUL` executable, so the helper validates the source tree, searches for `yaYUL`, and prints the exact next command when the assembler is missing.
+The helper validates the source tree, searches for `yaYUL`, and prints the exact next command when the assembler is missing. In this workspace the normal path uses the local `yaYUL.exe` at the repository root.
 
 ## One-command path
 
@@ -137,7 +137,7 @@ That command:
 - generates an ignored local `embedded/tests/agc_trace_real_candidate.csv` from the embedded core's `embedded/esp32_agc_core/rope_image.h`
 - compares both traces and prints the first mismatching columns without failing the whole run
 
-The default real-rope comparison is intentionally faithful to yaAGC's hardware timing. The current embedded trace runner is still instruction-level, so the first expected mismatch is the scaler/timer steal cycle at row 113. This is the next target for machine-cycle-accurate peripheral timing.
+The default real-rope comparison is intentionally faithful to yaAGC's hardware timing. It enables the embedded machine-timing layer for scaler steals, `TIME1..TIME6` counter pulses, interrupt-entry rows, and the channel-10 DSKY output latch model. The checked-in faithful reference currently validates 8192 real Comanche055 trace rows with all columns matching.
 
 For opcode and CPU-state validation without scaler/downrupt interference, run CPU-only mode:
 
@@ -151,11 +151,11 @@ You can also run each side manually:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File embedded\tools\run_yaagc_reference_trace.ps1 -RomImage path\to\MAIN.agc.bin -Output embedded\tests\agc_trace_real_yaagc.csv -Steps 64
-powershell -ExecutionPolicy Bypass -File embedded\tools\run_agc_trace_validation.ps1 -Mode Rope -Steps 64 -CandidateTrace embedded\tests\agc_trace_real_candidate.csv -AllowRunnerFailure
+powershell -ExecutionPolicy Bypass -File embedded\tools\run_agc_trace_validation.ps1 -Mode Rope -Steps 64 -CandidateTrace embedded\tests\agc_trace_real_candidate.csv -AllowRunnerFailure -HardwareTiming
 powershell -ExecutionPolicy Bypass -File embedded\tools\compare_agc_trace.ps1 -CandidateTrace embedded\tests\agc_trace_real_candidate.csv -ReferenceTrace embedded\tests\agc_trace_real_yaagc.csv -AllowMismatch -MaxMismatches 20
 ```
 
-At this stage mismatches are expected: the embedded core has first-pass opcode, edit-register, interrupt, downrupt, and channel behavior, while yaAGC is the historical reference. The useful artifact is the first mismatch location; it tells us exactly which semantic layer to tighten next.
+At this stage mismatches beyond the checked validation windows are still expected: the embedded core now has executable first-pass opcode, edit-register, scaler, interrupt-entry, downrupt, and channel behavior, while yaAGC remains the historical reference. The useful artifact is the first mismatch location; it tells us exactly which semantic layer to tighten next.
 
 ## Current emulator status
 
@@ -166,10 +166,15 @@ The core now has:
 - physical-format `EBANK`, `FBANK`, and `BBANK` mirroring compatible with yaAGC traces
 - explicit Block II instruction-map dispatch for basic opcodes, extracodes, quarter-code groups, and peripheral-code channel operations
 - I/O channel storage using the AGC 9-bit channel address, including `L`/`Q` channel aliases, `SUPERBNK` bank selection, channel `030..033` reset defaults, and channel `033` CPU-write latch behavior
+- channel `010` DSKY output-row latching compatible with yaAGC's `OutputChannel10[16]`
 - Block II interrupt vectors for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
+- trace-visible interrupt-entry rows that save `ZRUPT/BRUPT` before executing the vector
 - MCT-driven counter pulses for `TIME1..TIME6`, uplink shifting, keyrupt, and scheduled downrupt/downlink tests
+- yaAGC-style machine timing for scaler overflows, pre-instruction steals, in-instruction extra-delay folding, and `TIME1..TIME6` pulses
 - read-side and write-side editing behavior for `CYR`, `SR`, `CYL`, and `EDOP`
+- ones-complement `INDEX` instruction addition, including the `-0` case
 - expanded basic/extracode execution for `DAS`, `LXCH`, `INCR`, `ADS`, `DXCH`, `TS`, `XCH`, `TC Q`, `BZF`, `BZMF`, `MSU`, `QXCH`, `AUG`, `DIM`, `DCA`, `DCS`, `SU`, `MP`, and the channel logic instructions
 - a yaAGC reference trace path that passes 4096 CPU-only Comanche055 instructions against the embedded core
+- a yaAGC faithful hardware-timing trace path that passes 8192 Comanche055 rows against the embedded core
 
-This is still not enough to run the full original Comanche software correctly. The CPU-only opcode/channel path now has a 4096-instruction yaAGC validation window, but machine-cycle-accurate scaler steals, counter timing, downrupt scheduling, and peripheral interleaving are still the next historical-exactness targets.
+This is still not enough to claim a complete native AGC. The CPU-only opcode/channel path has a 4096-instruction yaAGC validation window and the faithful hardware-timing path has an 8192-row window, but longer traces still need systematic expansion around downrupt/uplink scheduling, restart-watchdog behavior, radar/hand controller traps, and richer peripheral interleaving.

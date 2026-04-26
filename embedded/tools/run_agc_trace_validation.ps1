@@ -6,6 +6,7 @@ param(
   [ValidateSet("Synthetic", "Rope")]
   [string]$Mode = "Synthetic",
   [int]$Steps = 0,
+  [switch]$HardwareTiming,
   [switch]$AllowRunnerFailure,
   [switch]$NoRun
 )
@@ -86,6 +87,9 @@ if ($NoRun) {
 $traceArgs = @("--mode", $Mode.ToLowerInvariant())
 if ($Steps -gt 0) {
   $traceArgs += @("--steps", "$Steps")
+}
+if ($HardwareTiming) {
+  $traceArgs += "--hardware-timing"
 }
 
 & $Output @traceArgs > $CandidateTrace

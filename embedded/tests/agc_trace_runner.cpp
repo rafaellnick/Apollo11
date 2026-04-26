@@ -1,4 +1,5 @@
 #include "../shared/agc_core.h"
+#include "../shared/agc_machine_timing.h"
 #include "../esp32_agc_core/rope_image.h"
 
 #include <cstdlib>
@@ -24,6 +25,25 @@ enum class TraceMode {
 struct Options {
   TraceMode mode = TraceMode::Synthetic;
   uint16_t steps = 0;
+  bool hardwareTiming = false;
+};
+
+struct TraceSnapshot {
+  uint16_t pc;
+  uint16_t instruction;
+  bool extended;
+  uint16_t a;
+  uint16_t l;
+  uint16_t q;
+  uint16_t z;
+  uint16_t eb;
+  uint16_t fb;
+  uint16_t bb;
+  uint32_t cycles;
+  uint16_t mct;
+  uint16_t irq;
+  uint16_t ch010;
+  uint16_t ch015;
 };
 
 uint16_t encodeQuarter(uint8_t opcode, uint8_t quarter, uint16_t address) {
@@ -48,32 +68,61 @@ void printTraceHeader() {
       << "step,pc,instr,extended,a,l,q,z,eb,fb,bb,cyc,mct,irq,ch010,ch015\n";
 }
 
-void printTraceRow(const agc::Core& core, uint16_t step) {
+TraceSnapshot makeTraceSnapshot(const agc::Core& core,
+                                uint16_t pc,
+                                uint16_t instruction,
+                                bool extended,
+                                uint16_t mct) {
+  TraceSnapshot snapshot = {};
+  snapshot.pc = pc & agc::Core::kAddressMask;
+  snapshot.instruction = instruction & agc::Core::kWordMask;
+  snapshot.extended = extended;
+  snapshot.a = core.getA();
+  snapshot.l = core.readErasable(agc::Core::kRegL);
+  snapshot.q = core.readErasable(agc::Core::kRegQ);
+  snapshot.z = core.getZ();
+  snapshot.eb = core.readErasable(agc::Core::kRegEBANK);
+  snapshot.fb = core.readErasable(agc::Core::kRegFBANK);
+  snapshot.bb = core.readErasable(agc::Core::kRegBBANK);
+  snapshot.cycles = core.cycles();
+  snapshot.mct = mct;
+  snapshot.irq = core.pendingInterruptMask();
+  snapshot.ch010 = core.readOutputChannel10(0);
+  snapshot.ch015 = core.readChannel(0015);
+  return snapshot;
+}
+
+TraceSnapshot makeInstructionSnapshot(const agc::Core& core, uint16_t mct) {
+  return makeTraceSnapshot(core, core.lastAddress(), core.lastInstruction(),
+                           core.lastInstructionExtended(), mct);
+}
+
+void printTraceRow(const TraceSnapshot& snapshot, uint16_t step) {
   std::cout << std::dec << step << ",";
-  printOctal(core.lastAddress(), 4);
+  printOctal(snapshot.pc, 4);
   std::cout << ",";
-  printOctal(core.lastInstruction(), 5);
-  std::cout << "," << (core.lastInstructionExtended() ? 1 : 0) << ",";
-  printOctal(core.getA(), 5);
+  printOctal(snapshot.instruction, 5);
+  std::cout << "," << (snapshot.extended ? 1 : 0) << ",";
+  printOctal(snapshot.a, 5);
   std::cout << ",";
-  printOctal(core.readErasable(agc::Core::kRegL), 5);
+  printOctal(snapshot.l, 5);
   std::cout << ",";
-  printOctal(core.readErasable(agc::Core::kRegQ), 5);
+  printOctal(snapshot.q, 5);
   std::cout << ",";
-  printOctal(core.getZ(), 4);
+  printOctal(snapshot.z, 4);
   std::cout << ",";
-  printOctal(core.readErasable(agc::Core::kRegEBANK), 5);
+  printOctal(snapshot.eb, 5);
   std::cout << ",";
-  printOctal(core.readErasable(agc::Core::kRegFBANK), 5);
+  printOctal(snapshot.fb, 5);
   std::cout << ",";
-  printOctal(core.readErasable(agc::Core::kRegBBANK), 5);
-  std::cout << "," << core.cycles() << ","
-            << static_cast<unsigned int>(core.lastInstructionMct()) << ",";
-  printOctal(core.pendingInterruptMask(), 3);
+  printOctal(snapshot.bb, 5);
+  std::cout << "," << snapshot.cycles << ","
+            << static_cast<unsigned int>(snapshot.mct) << ",";
+  printOctal(snapshot.irq, 3);
   std::cout << ",";
-  printOctal(core.readChannel(0010), 5);
+  printOctal(snapshot.ch010, 5);
   std::cout << ",";
-  printOctal(core.readChannel(0015), 5);
+  printOctal(snapshot.ch015, 5);
   std::cout << "\n";
 }
 
@@ -124,7 +173,7 @@ bool parseUnsigned(const char* text, uint16_t* value) {
 
 void printUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
-            << " [--mode synthetic|rope] [--steps N]\n";
+            << " [--mode synthetic|rope] [--steps N] [--hardware-timing]\n";
 }
 
 bool parseOptions(int argc, char** argv, Options* options) {
@@ -144,6 +193,8 @@ bool parseOptions(int argc, char** argv, Options* options) {
       if (!parseUnsigned(argv[++i], &options->steps)) {
         return false;
       }
+    } else if (std::strcmp(argv[i], "--hardware-timing") == 0) {
+      options->hardwareTiming = true;
     } else if (std::strcmp(argv[i], "--help") == 0) {
       return false;
     } else {
@@ -173,6 +224,9 @@ int main(int argc, char** argv) {
   }
 
   core.start();
+  agc::MachineTiming machineTiming;
+  const bool useHardwareTiming =
+      options.hardwareTiming && options.mode == TraceMode::Rope;
 
   const uint16_t steps =
       options.steps != 0
@@ -181,8 +235,44 @@ int main(int argc, char** argv) {
 
   printTraceHeader();
   for (uint16_t step = 1; step <= steps; ++step) {
+    if (useHardwareTiming) {
+      const uint16_t pc = core.previewAddress();
+      const uint16_t instruction = core.previewInstruction();
+      const bool extended = core.previewInstructionExtended();
+      const uint16_t stallMct = machineTiming.consumeStallCycles(core);
+      if (stallMct > 0) {
+        printTraceRow(makeTraceSnapshot(core, pc, instruction, extended,
+                                        stallMct),
+                      step);
+        continue;
+      }
+
+      uint16_t interruptedPc = 0;
+      uint16_t interruptedInstruction = 0;
+      if (core.serviceInterruptEntry(&interruptedPc,
+                                     &interruptedInstruction)) {
+        const uint32_t cyclesBefore = core.cycles();
+        core.advanceCycles(agc::Core::kRuptEntryMct);
+        machineTiming.observeCpuCycles(core, agc::Core::kRuptEntryMct);
+        const uint16_t rowMct =
+            static_cast<uint16_t>(core.cycles() - cyclesBefore);
+        printTraceRow(makeTraceSnapshot(core, interruptedPc,
+                                        interruptedInstruction, extended,
+                                        rowMct),
+                      step);
+        continue;
+      }
+    }
+
+    const uint32_t cyclesBefore = core.cycles();
     const bool ok = core.step();
-    printTraceRow(core, step);
+    uint32_t rowMct = core.lastInstructionMct();
+    if (useHardwareTiming) {
+      machineTiming.observeCpuCycles(core, core.cycles() - cyclesBefore);
+      rowMct = core.cycles() - cyclesBefore;
+    }
+    printTraceRow(makeInstructionSnapshot(core, static_cast<uint16_t>(rowMct)),
+                  step);
     if (!ok) {
       break;
     }

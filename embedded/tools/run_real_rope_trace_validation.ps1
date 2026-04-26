@@ -137,6 +137,9 @@ $candidateArgs = @(
   "-CandidateTrace", $candidateOut,
   "-AllowRunnerFailure"
 )
+if (-not $CpuOnly) {
+  $candidateArgs += "-HardwareTiming"
+}
 
 Write-Host "Generating embedded-core real-rope candidate trace..."
 Invoke-PowershellScript -Arguments $candidateArgs

@@ -25,6 +25,7 @@ int main() {
 
   core.writeChannel(0010, 012345);
   assert(core.readChannel(0010) == 012345);
+  assert(core.readOutputChannel10(0) == 0);
   core.writeChannel(0777, 076543);
   assert(core.readChannel(0777) == 076543);
   core.writeChannel(01001, 000123);
@@ -131,6 +132,20 @@ int main() {
   assert(ccsCore.getA() == agc::Core::fromInt(2));
   assert(ccsCore.readErasable(00120) == agc::Core::fromInt(3));
 
+  agc::Core indexMinusZeroCore;
+  indexMinusZeroCore.writeErasable(00120, agc::Core::kWordMask);
+  indexMinusZeroCore.writeErasable(00123, agc::Core::fromInt(4));
+  indexMinusZeroCore.writeFixed(agc::Core::kBootAddress,
+                                static_cast<uint16_t>(050000 | 00120));
+  indexMinusZeroCore.writeFixed(agc::Core::kBootAddress + 1,
+                                agc::Core::encodeBasic(1, 00123));
+  indexMinusZeroCore.start();
+  assert(indexMinusZeroCore.step());
+  assert(indexMinusZeroCore.step());
+  assert(indexMinusZeroCore.lastInstruction() ==
+         agc::Core::encodeBasic(1, 00123));
+  assert(indexMinusZeroCore.getA() == agc::Core::fromInt(3));
+
   agc::Core lxchCore;
   lxchCore.writeErasable(agc::Core::kRegL, 000123);
   lxchCore.writeErasable(00120, 000456);
@@ -164,6 +179,18 @@ int main() {
   assert(ioCore.step());
   assert(ioCore.step());
   assert(ioCore.getA() == 001234);
+
+  agc::Core channel10Core;
+  channel10Core.setA(060400);
+  channel10Core.writeFixed(agc::Core::kBootAddress,
+                           agc::Core::kInstructionExtend);
+  channel10Core.writeFixed(agc::Core::kBootAddress + 1, 001010);
+  channel10Core.start();
+  assert(channel10Core.step());
+  assert(channel10Core.step());
+  assert(channel10Core.readChannel(agc::Core::kChannelDSKY) == 060400);
+  assert(channel10Core.readOutputChannel10(014) == 060400);
+  assert(channel10Core.readOutputChannel10(0) == 0);
 
   agc::Core channel33Core;
   channel33Core.setA(040000);
