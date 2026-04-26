@@ -46,10 +46,6 @@ if ($Steps -le 0) {
   throw "-Steps must be greater than zero."
 }
 
-if ($Program -ne "Comanche055") {
-  Write-Warning "The embedded candidate runner uses embedded\esp32_agc_core\rope_image.h. Rebuild that header for $Program before trusting the candidate trace."
-}
-
 if ($CpuOnly) {
   if ($CandidateTrace -eq "embedded\tests\agc_trace_real_candidate.csv") {
     $CandidateTrace = "embedded\tests\agc_trace_real_cpu_candidate.csv"
@@ -135,6 +131,7 @@ $candidateArgs = @(
   "-Mode", "Rope",
   "-Steps", "$Steps",
   "-CandidateTrace", $candidateOut,
+  "-RopeBin", $romImage,
   "-AllowRunnerFailure"
 )
 if (-not $CpuOnly) {

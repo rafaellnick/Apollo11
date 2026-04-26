@@ -153,6 +153,7 @@ class Core {
     interruptsEnabled_ = true;
     interruptsInhibited_ = false;
     inInterruptService_ = false;
+    accumulatorOverflow_ = 0;
     pendingInterruptMask_ = 0;
     activeInterrupt_ = 0;
     hardwareWriteFlags_ = 0;
@@ -211,7 +212,9 @@ class Core {
       return false;
     }
 
-    const bool ruptServiced = serviceInterrupt();
+    if (serviceInterrupt()) {
+      return true;
+    }
 
     const uint16_t pc = getZ();
     uint16_t instruction = 0;
@@ -247,9 +250,6 @@ class Core {
     }
 
     cycles_ += lastInstructionMct_;
-    if (ruptServiced) {
-      cycles_ += kRuptEntryMct;
-    }
     return runState_ != RunState::Faulted;
   }
 
@@ -310,6 +310,10 @@ class Core {
 
     if (address == kRegZERO) {
       return;
+    }
+
+    if (address == kRegA) {
+      accumulatorOverflow_ = 0;
     }
 
     if (isBankRegister(address)) {
@@ -376,6 +380,7 @@ class Core {
     interruptsEnabled_ = true;
     interruptsInhibited_ = false;
     inInterruptService_ = false;
+    accumulatorOverflow_ = 0;
     pendingInterruptMask_ = 0;
     activeInterrupt_ = 0;
     hardwareWriteFlags_ = 0;
@@ -490,6 +495,7 @@ class Core {
     interruptsEnabled_ = true;
     interruptsInhibited_ = false;
     inInterruptService_ = false;
+    accumulatorOverflow_ = 0;
     pendingInterruptMask_ = 0;
     activeInterrupt_ = 0;
     indexPending_ = false;
@@ -537,14 +543,13 @@ class Core {
 
   bool serviceInterruptEntry(uint16_t* interruptedPcOut = nullptr,
                              uint16_t* interruptedInstructionOut = nullptr) {
-    if (!interruptsEnabled_ || interruptsInhibited_ ||
-        pendingInterruptMask_ == 0 || extendPending_ ||
-        forcedInstructionPending_) {
+    if (!canEnterInterrupt()) {
       return false;
     }
 
     const uint16_t interruptedPc = getZ();
-    uint16_t interruptedInstruction = read(interruptedPc);
+    uint16_t interruptedInstruction =
+        forcedInstructionPending_ ? forcedInstruction_ : read(interruptedPc);
     if (!indexPending_ &&
         isInterruptBoundaryInstruction(interruptedInstruction)) {
       return false;
@@ -564,19 +569,8 @@ class Core {
         indexPending_ = false;
         indexValue_ = 0;
       }
-      writeErasable(kRegZRUPT, interruptedPc);
-      writeErasable(kRegBRUPT, interruptedInstruction);
-      interruptsInhibited_ = true;
-      inInterruptService_ = true;
-      interruptEntryEvent_ = true;
-      setZ(interruptVectorAddress(i));
-      if (interruptedPcOut != nullptr) {
-        *interruptedPcOut = interruptedPc;
-      }
-      if (interruptedInstructionOut != nullptr) {
-        *interruptedInstructionOut = interruptedInstruction;
-      }
-      return true;
+      return enterInterrupt(i, interruptedPc, interruptedInstruction,
+                            interruptedPcOut, interruptedInstructionOut);
     }
 
     return false;
@@ -651,7 +645,7 @@ class Core {
   }
 
   uint16_t getA() const { return readErasable(kRegA); }
-  void setA(uint16_t value) { writeErasable(kRegA, value); }
+  void setA(uint16_t value) { setAWithOverflow(value, 0); }
 
   uint16_t getZ() const { return readErasable(kRegZ) & kAddressMask; }
   void setZ(uint16_t address) { writeErasable(kRegZ, address & kAddressMask); }
@@ -686,6 +680,120 @@ class Core {
     sum = (sum & kWordMask) + (sum >> 15);
     sum = (sum & kWordMask) + (sum >> 15);
     return static_cast<uint16_t>(sum & kWordMask);
+  }
+
+  static uint32_t addSp16(uint32_t left, uint32_t right) {
+    uint32_t sum = (left & 0177777U) + (right & 0177777U);
+    if ((sum & 0200000U) != 0) {
+      sum = (sum + 1U) & 0177777U;
+    }
+    return sum & 0177777U;
+  }
+
+  static int8_t valueOverflowed16(uint32_t value) {
+    switch (value & 0140000U) {
+      case 0040000U:
+        return 1;
+      case 0100000U:
+        return -1;
+      default:
+        return 0;
+    }
+  }
+
+  static uint16_t overflowCorrected16(uint32_t value) {
+    return static_cast<uint16_t>(((value & 037777U) |
+                                  ((value >> 1) & kSignBit)) &
+                                 kWordMask);
+  }
+
+  static uint32_t signExtendSp16(uint16_t word) {
+    return ((word & kWordMask) | ((word << 1) & 0100000U)) & 0177777U;
+  }
+
+  static uint16_t absSp(uint16_t value) {
+    value &= kWordMask;
+    return (value & kSignBit) != 0
+               ? static_cast<uint16_t>((~value) & kWordMask)
+               : value;
+  }
+
+  static int32_t agcSpToCpu(uint16_t value) {
+    value &= kWordMask;
+    return (value & kSignBit) != 0
+               ? -static_cast<int32_t>((~value) & kPositiveMask)
+               : static_cast<int32_t>(value & kPositiveMask);
+  }
+
+  static uint16_t cpuToAgcSp(int32_t value) {
+    if (value < 0) {
+      return static_cast<uint16_t>((~static_cast<uint32_t>(-value)) &
+                                   kWordMask);
+    }
+    return static_cast<uint16_t>(value & kWordMask);
+  }
+
+  static int32_t agcDpToCpu(uint32_t value) {
+    value &= 03777777777U;
+    if ((value & 02000000000U) != 0) {
+      return -static_cast<int32_t>((~value) & 01777777777U);
+    }
+    return static_cast<int32_t>(value & 01777777777U);
+  }
+
+  static uint32_t cpuToAgcDp(int32_t value) {
+    if (value < 0) {
+      return (~static_cast<uint32_t>(-value)) & 03777777777U;
+    }
+    return static_cast<uint32_t>(value) & 01777777777U;
+  }
+
+  static uint32_t spToDecent(uint16_t msbIn, uint16_t lsbIn) {
+    uint16_t msb = msbIn & kWordMask;
+    uint16_t lsb = lsbIn & kWordMask;
+
+    if (msb == 0 || msb == kWordMask) {
+      uint32_t value = signExtendSp16(lsb);
+      if ((value & 0100000U) != 0) {
+        value |= ~0177777U;
+      }
+      return value & 07777777777U;
+    }
+
+    if ((lsb & kSignBit) != (msb & kSignBit)) {
+      if (lsb == 0 || lsb == kWordMask) {
+        lsb = (msb & kSignBit) == 0 ? 0 : kWordMask;
+      } else {
+        const bool complement = (msb & kSignBit) != 0;
+        if (complement) {
+          msb = static_cast<uint16_t>((~msb) & kWordMask);
+          lsb = static_cast<uint16_t>((~lsb) & kWordMask);
+        }
+        msb = static_cast<uint16_t>((msb - 1U) & kWordMask);
+        lsb = static_cast<uint16_t>((lsb + 040000U + 1U) & kWordMask);
+        if (complement) {
+          msb = static_cast<uint16_t>((~msb) & kWordMask);
+          lsb = static_cast<uint16_t>((~lsb) & kWordMask);
+        }
+      }
+    }
+
+    uint32_t value =
+        (03777740000U & (static_cast<uint32_t>(msb) << 14)) |
+        (037777U & lsb);
+    if ((value & 02000000000U) != 0) {
+      value |= 04000000000U;
+    }
+    return value & 07777777777U;
+  }
+
+  static void decentToSp(uint32_t decent, uint16_t& msb, uint16_t& lsb) {
+    const bool negative = (decent & 04000000000U) != 0;
+    lsb = static_cast<uint16_t>(decent & 037777U);
+    if (negative) {
+      lsb |= kSignBit;
+    }
+    msb = overflowCorrected16((decent >> 14) & 0177777U);
   }
 
   static uint16_t negate(uint16_t word) { return (~word) & kWordMask; }
@@ -1017,7 +1125,7 @@ class Core {
         executeBasicQuarter5(instruction, quarter, indexedInstruction);
         break;
       case 6:
-        setA(addOnesComplement(getA(), read(operand)));
+        executeAd(operand);
         break;
       case 7:
         setA(static_cast<uint16_t>(getA() & read(operand)));
@@ -1066,7 +1174,7 @@ class Core {
         executeDxch(previousAddress10(instruction));
         break;
       case 2:
-        write(address10(instruction), getA());
+        executeTs(address10(instruction));
         break;
       case 3:
         executeXch(address10(instruction));
@@ -1174,6 +1282,52 @@ class Core {
     writeChannel(channel, value);
   }
 
+  void executeAd(uint16_t operand) {
+    const uint16_t left = getA();
+    const uint16_t right = read(operand);
+    const uint16_t result = addOnesComplement(left, right);
+    const bool leftNegative = (left & kSignBit) != 0;
+    const bool rightNegative = (right & kSignBit) != 0;
+    const bool resultNegative = (result & kSignBit) != 0;
+    int8_t overflow = 0;
+
+    if (!leftNegative && !rightNegative && resultNegative) {
+      overflow = 1;
+    } else if (leftNegative && rightNegative && !resultNegative) {
+      overflow = -1;
+    }
+
+    setAWithOverflow(result, overflow);
+  }
+
+  void executeTs(uint16_t address) {
+    address &= kLow10Mask;
+    const uint16_t accumulator = getA();
+    const int8_t overflow = accumulatorOverflow_;
+
+    if (address == kRegA) {
+      if (overflow != 0) {
+        setZ(incrementAddress(getZ(), 1));
+      }
+      return;
+    }
+
+    if (address == kRegZ) {
+      setZ(accumulator);
+      if (overflow != 0) {
+        setA(overflowResidual(overflow));
+      }
+      return;
+    }
+
+    write(address, overflow == 0 ? accumulator
+                                 : overflowCorrectedAccumulator(overflow));
+    if (overflow != 0) {
+      setA(overflowResidual(overflow));
+      setZ(incrementAddress(getZ(), 1));
+    }
+  }
+
   void executeExtended(uint16_t instruction) {
     const uint8_t opcode = instructionCode(instruction);
     const uint8_t quarter = quarterCode(instruction);
@@ -1223,18 +1377,50 @@ class Core {
   }
 
   void executeDivide(uint16_t operand) {
-    const int16_t divisor = toInt(read(operand));
-    if (divisor == 0) {
-      setFault(Fault::DivideByZero);
+    operand &= kLow10Mask;
+
+    uint16_t accMsw = overflowCorrected16(accumulator16());
+    uint16_t accLsw = readErasable(kRegL);
+    const uint32_t dividend = spToDecent(accMsw, accLsw);
+    decentToSp(dividend, accMsw, accLsw);
+
+    const uint16_t absA = absSp(accMsw);
+    const uint16_t absL = absSp(accLsw);
+    const uint32_t divisor16 = dvDivisor(operand, absA);
+    const uint16_t absK = absSp(overflowCorrected16(divisor16));
+
+    if (absA > absK || (absA == absK && absL != 0) ||
+        valueOverflowed16(divisor16) != 0) {
+      simulateHardwareDivide(divisor16);
       return;
     }
 
-    const int16_t quotient =
-        static_cast<int16_t>(toInt(getA()) / divisor);
-    const int16_t remainder =
-        static_cast<int16_t>(toInt(getA()) % divisor);
-    setA(fromInt(quotient));
-    writeErasable(kRegL, fromInt(remainder));
+    if (absA == 0 && absL == 0) {
+      uint16_t quotient = 0;
+      if ((readErasable(kRegL) & kSignBit) ==
+          (overflowCorrected16(divisor16) & kSignBit)) {
+        quotient = absK == 0 ? 037777 : 0;
+      } else {
+        quotient = absK == 0 ? kSignBit : kWordMask;
+      }
+      setA(quotient);
+      return;
+    }
+
+    if (absA == absK && absL == 0) {
+      writeErasable(kRegL, accMsw);
+      setA(accMsw == overflowCorrected16(divisor16) ? 037777 : kSignBit);
+      return;
+    }
+
+    const int32_t cpuDividend = agcDpToCpu(dividend);
+    const int32_t cpuDivisor = agcSpToCpu(overflowCorrected16(divisor16));
+    const int32_t quotient = cpuDividend / cpuDivisor;
+    const int32_t remainder = cpuDividend % cpuDivisor;
+    setA(cpuToAgcSp(quotient));
+    writeErasable(kRegL, remainder == 0
+                              ? (cpuDividend >= 0 ? 0 : kWordMask)
+                              : cpuToAgcSp(remainder));
   }
 
   void executeBzf(uint16_t operand) {
@@ -1260,21 +1446,58 @@ class Core {
   }
 
   void executeMsu(uint16_t operand) {
-    const uint16_t value = read(operand);
-    setA(addOnesComplement(getA(), negate(value)));
-    writeErasable(operand, value);
+    operand &= kLow10Mask;
+    uint32_t left = getA();
+    uint32_t rightComplement = 0;
+    if (operand < 020) {
+      rightComplement = (~readErasable(operand)) & 0177777;
+    } else {
+      left &= kWordMask;
+      rightComplement = (~read(operand)) & kWordMask;
+    }
+
+    int32_t difference = static_cast<int32_t>(left + rightComplement + 1U);
+    if ((difference & kSignBit) != 0) {
+      difference |= 0100000;
+      --difference;
+    }
+    setA(static_cast<uint16_t>(difference) & kWordMask);
   }
 
   void executeMultiply(uint16_t operand) {
-    const int32_t product =
-        static_cast<int32_t>(toInt(getA())) * static_cast<int32_t>(toInt(read(operand)));
-    const int32_t high = product / 040000;
-    int32_t low = product % 040000;
-    if (low < 0) {
-      low = -low;
+    operand &= kAddressMask;
+    const uint16_t multiplicand = overflowCorrected16(accumulator16());
+    const uint16_t multiplier =
+        operand < 020 ? overflowCorrected16(signExtendSp16(readErasable(operand)))
+                      : read(operand);
+
+    if (multiplier == 0 || multiplier == kWordMask) {
+      setA(0);
+      writeErasable(kRegL, 0);
+      return;
     }
-    setA(fromInt(clampAgcInt(high)));
-    writeErasable(kRegL, fromInt(clampAgcInt(low)));
+
+    if (multiplicand == 0 || multiplicand == kWordMask) {
+      const bool negativeZero =
+          (multiplicand == 0 && (multiplier & kSignBit) != 0) ||
+          (multiplicand == kWordMask && (multiplier & kSignBit) == 0);
+      const uint16_t zero = negativeZero ? kWordMask : 0;
+      setA(zero);
+      writeErasable(kRegL, zero);
+      return;
+    }
+
+    uint32_t product =
+        cpuToAgcDp(agcSpToCpu(multiplicand) * agcSpToCpu(multiplier));
+    if ((product & 02000000000U) != 0) {
+      product |= 04000000000U;
+    }
+
+    uint16_t high = 0;
+    uint16_t low = 0;
+    decentToSp(product, high, low);
+    setA(high);
+    writeErasable(kRegL, low);
   }
 
   void executeDas(uint16_t operand) {
@@ -1401,7 +1624,71 @@ class Core {
   }
 
   bool serviceInterrupt() {
-    return serviceInterruptEntry();
+    uint16_t interruptedPc = 0;
+    uint16_t interruptedInstruction = 0;
+    if (!serviceInterruptEntry(&interruptedPc, &interruptedInstruction)) {
+      return false;
+    }
+
+    lastAddress_ = interruptedPc;
+    lastInstruction_ = interruptedInstruction;
+    lastOpcode_ = instructionCode(interruptedInstruction);
+    lastExtended_ = false;
+    lastInstructionMct_ = kRuptEntryMct;
+    cycles_ += kRuptEntryMct;
+    return true;
+  }
+
+  bool canEnterInterrupt() const {
+    return interruptsEnabled_ && !interruptsInhibited_ &&
+           pendingInterruptMask_ != 0 && !extendPending_;
+  }
+
+  bool serviceInterruptEntryAt(uint16_t interruptedPc,
+                               uint16_t interruptedInstruction) {
+    if (!canEnterInterrupt() ||
+        isInterruptBoundaryInstruction(interruptedInstruction)) {
+      return false;
+    }
+
+    for (uint8_t i = 0; i < kInterruptCount; ++i) {
+      if ((pendingInterruptMask_ & (1U << i)) == 0) {
+        continue;
+      }
+
+      return enterInterrupt(i, interruptedPc, interruptedInstruction, nullptr,
+                            nullptr);
+    }
+
+    return false;
+  }
+
+  bool enterInterrupt(uint8_t interruptNumber,
+                      uint16_t interruptedPc,
+                      uint16_t interruptedInstruction,
+                      uint16_t* interruptedPcOut,
+                      uint16_t* interruptedInstructionOut) {
+    pendingInterruptMask_ &=
+        static_cast<uint16_t>(~static_cast<uint16_t>(1U << interruptNumber));
+    activeInterrupt_ = interruptNumber;
+    writeErasable(kRegZRUPT, interruptedPc);
+    writeErasable(kRegBRUPT, interruptedInstruction);
+    indexPending_ = false;
+    indexValue_ = 0;
+    extendPending_ = false;
+    forcedInstructionPending_ = false;
+    forcedInstruction_ = 0;
+    interruptsInhibited_ = true;
+    inInterruptService_ = true;
+    interruptEntryEvent_ = true;
+    setZ(interruptVectorAddress(interruptNumber));
+    if (interruptedPcOut != nullptr) {
+      *interruptedPcOut = interruptedPc;
+    }
+    if (interruptedInstructionOut != nullptr) {
+      *interruptedInstructionOut = interruptedInstruction;
+    }
+    return true;
   }
 
   void resumeFromInterrupt() {
@@ -1450,6 +1737,120 @@ class Core {
     runState_ = RunState::Faulted;
   }
 
+  uint32_t accumulator16() const {
+    const uint16_t accumulator = getA();
+    if (accumulatorOverflow_ > 0) {
+      return accumulator & kWordMask;
+    }
+    if (accumulatorOverflow_ < 0) {
+      return (0100000U | (accumulator & kPositiveMask)) & 0177777U;
+    }
+    return signExtendSp16(accumulator);
+  }
+
+  uint32_t dvDivisor(uint16_t operand, uint16_t absA) const {
+    operand &= kLow10Mask;
+    const bool dividendNegative =
+        (absA == 0 && (readErasable(kRegL) & kSignBit) != 0) ||
+        (absA != 0 && (getA() & kSignBit) != 0);
+
+    if (operand == kRegA) {
+      uint32_t divisor = accumulator16();
+      if ((divisor & 0100000U) == 0) {
+        divisor = (~divisor) & 0177777U;
+      }
+      return divisor;
+    }
+
+    if (operand == kRegL) {
+      uint32_t divisor = signExtendSp16(readErasable(kRegL));
+      if (dividendNegative) {
+        divisor = (~divisor) & 0177777U;
+      }
+      return signExtendSp16(
+          overflowCorrected16(addSp16(divisor, 040000U)));
+    }
+
+    if (operand == kRegZ) {
+      uint32_t divisor = signExtendSp16(readErasable(kRegZ));
+      if (dividendNegative) {
+        divisor |= 0100000U;
+      }
+      return divisor & 0177777U;
+    }
+
+    if (operand < 020) {
+      return signExtendSp16(readErasable(operand));
+    }
+
+    return signExtendSp16(read(operand));
+  }
+
+  void simulateHardwareDivide(uint32_t divisor) {
+    divisor &= 0177777U;
+    uint32_t a = accumulator16();
+    uint32_t l = signExtendSp16(readErasable(kRegL));
+
+    uint32_t dividendSign = a & 0100000U;
+    if (dividendSign == 0) {
+      a = (~a) & 0177777U;
+    }
+    if (a == 0177777U) {
+      dividendSign = l & 0100000U;
+    }
+    if (dividendSign != 0) {
+      l = (~l) & 0177777U;
+    }
+
+    l = addSp16(l, 040000U);
+    if (valueOverflowed16(l) != 1) {
+      a = addSp16(a, 1U);
+    }
+
+    uint32_t remainder = a;
+    const uint32_t divisorSign = divisor & 0100000U;
+    if (divisorSign != 0) {
+      divisor = (~divisor) & 0177777U;
+    }
+
+    const uint32_t quotientSign = l & 0100000U;
+    uint32_t quotient =
+        quotientSign | ((l & 037777U) << 1) | (quotientSign >> 15);
+
+    for (uint8_t i = 0; i < 14; ++i) {
+      quotient <<= 1;
+      const uint32_t remainderSign = remainder & 0100000U;
+      remainder = remainderSign | ((remainder & 037777U) << 1);
+      if ((quotient & 0100000U) == 0) {
+        remainder |= (remainderSign >> 15);
+      }
+
+      const uint32_t sum = addSp16(remainder, divisor);
+      if ((sum & 0100000U) != 0) {
+        quotient |= 1U;
+        remainder = sum;
+      }
+    }
+
+    a = quotientSign | (quotient & kWordMask);
+    setA(((dividendSign != divisorSign) ? ~a : a) & kWordMask);
+    writeErasable(kRegL,
+                  ((dividendSign != 0) ? remainder : ~remainder) & kWordMask);
+  }
+
+  void setAWithOverflow(uint16_t value, int8_t overflow) {
+    writeErasable(kRegA, value);
+    accumulatorOverflow_ = overflow;
+  }
+
+  static uint16_t overflowResidual(int8_t overflow) {
+    return overflow > 0 ? fromInt(1) : negate(fromInt(1));
+  }
+
+  static uint16_t overflowCorrectedAccumulator(int8_t overflow) {
+    return overflow > 0 ? 0 : kSignBit;
+  }
+
   void noteErasableAccess(uint16_t address) const {
     if ((address & (kErasableWords - 1)) == 00067) {
       nightWatchmanServiced_ = true;
@@ -1471,6 +1872,7 @@ class Core {
   bool interruptsEnabled_ = true;
   bool interruptsInhibited_ = false;
   bool inInterruptService_ = false;
+  int8_t accumulatorOverflow_ = 0;
   uint16_t pendingInterruptMask_ = 0;
   uint8_t activeInterrupt_ = 0;
   uint8_t hardwareWriteFlags_ = 0;

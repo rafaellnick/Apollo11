@@ -136,10 +136,16 @@ That command:
 
 - assembles a temporary Comanche055 rope with `yaYUL`
 - generates `embedded/tests/agc_trace_real_yaagc.csv` from `yaAGC`
-- generates an ignored local `embedded/tests/agc_trace_real_candidate.csv` from the embedded core's `embedded/esp32_agc_core/rope_image.h`
+- generates an ignored local `embedded/tests/agc_trace_real_candidate.csv` by loading the same temporary yaYUL `MAIN.agc.bin` directly into the embedded core
 - compares both traces and prints the first mismatching columns without failing the whole run
 
-The default real-rope comparison is intentionally faithful to yaAGC's hardware timing. It enables the embedded machine-timing layer for scaler steals, `TIME1..TIME6` counter pulses, interrupt-entry rows, channel-10 DSKY output-row latching, channel `034/035` downrupt scheduling, `UPRUPT`/`INLINK`, channel-13 radar and hand-controller traps, and first-pass channel-77 restart-monitor latches. The checked-in faithful reference currently validates 131072 real Comanche055 trace rows with all columns matching.
+The default real-rope comparison is intentionally faithful to yaAGC's hardware timing. It enables the embedded machine-timing layer for scaler steals, `TIME1..TIME6` counter pulses, interrupt-entry rows, channel-10 DSKY output-row latching, channel `034/035` downrupt scheduling, `UPRUPT`/`INLINK`, channel-13 radar and hand-controller traps, and first-pass channel-77 restart-monitor latches. The checked-in faithful reference currently validates 1048576 real Comanche055 trace rows with all columns matching.
+
+The same path can validate the Lunar Module rope without rebuilding `embedded/esp32_agc_core/rope_image.h`, because the candidate runner receives the temporary yaYUL binary via `--rope-bin`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\run_real_rope_trace_validation.ps1 -Program Luminary099 -Steps 65536 -CandidateTrace embedded\tests\agc_trace_luminary_candidate.csv -ReferenceTrace embedded\tests\agc_trace_luminary_yaagc.csv
+```
 
 For opcode and CPU-state validation without scaler/downrupt interference, run CPU-only mode:
 
@@ -179,7 +185,9 @@ The core now has:
 - read-side and write-side editing behavior for `CYR`, `SR`, `CYL`, and `EDOP`
 - ones-complement `INDEX` instruction addition, including the `-0` case
 - expanded basic/extracode execution for `DAS`, `LXCH`, `INCR`, `ADS`, `DXCH`, `TS`, `XCH`, `TC Q`, `BZF`, `BZMF`, `MSU`, `QXCH`, `AUG`, `DIM`, `DCA`, `DCS`, `SU`, `MP`, and the channel logic instructions
+- yaAGC-aligned double-precision `DV` and `MP` edge behavior, including signed zero, overflow/nonsense divide cases, and `A:L` conversion
+- yaAGC-aligned `RESUME`/`BRUPT` substitution when a pending interrupt vectors before the substituted instruction executes
 - a yaAGC reference trace path that passes 4096 CPU-only Comanche055 instructions against the embedded core
-- a yaAGC faithful hardware-timing trace path that passes 131072 Comanche055 rows against the embedded core
+- a yaAGC faithful hardware-timing trace path that passes 1048576 Comanche055 rows and 65536 Luminary099 rows against the embedded core
 
-This is still not enough to claim a complete native AGC. The CPU-only opcode/channel path has a 4096-instruction yaAGC validation window and the faithful hardware-timing path has a 131072-row window, and the previously missing downrupt/uplink scheduling, restart-watchdog behavior, radar/hand-controller traps, and peripheral interleaving now exist as executable first-pass models. What remains before calling it "full native AGC" is historical validation beyond those windows, exact peripheral data-source modeling, restart/parity edge cases, full uplink/downlink electrical behavior, and mission-length Comanche/Luminary runs against yaAGC/VirtualAGC traces.
+This is still not enough to claim a complete native AGC. The CPU-only opcode/channel path has a 4096-instruction yaAGC validation window and the faithful hardware-timing path now has large but finite Comanche/Luminary windows. The previously missing downrupt/uplink scheduling, restart-watchdog behavior, radar/hand-controller traps, peripheral interleaving, double-precision arithmetic edge cases, and RESUME/substitution interrupt timing now exist as executable models. What remains before calling it "full native AGC" is historical validation beyond those windows, exact peripheral data-source modeling, restart/parity edge cases, full uplink/downlink electrical behavior, and mission-length Comanche/Luminary runs against yaAGC/VirtualAGC traces.

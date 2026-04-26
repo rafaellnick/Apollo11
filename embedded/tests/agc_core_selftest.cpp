@@ -1,8 +1,18 @@
 #include "../shared/agc_core.h"
 #include "../shared/agc_machine_timing.h"
 
-#include <assert.h>
+#include <stdio.h>
 #include <stdint.h>
+
+#undef assert
+#define assert(expr)                                                          \
+  do {                                                                        \
+    if (!(expr)) {                                                            \
+      fprintf(stderr, "assert failed at %s:%d: %s\n", __FILE__, __LINE__,    \
+              #expr);                                                         \
+      return __LINE__;                                                        \
+    }                                                                         \
+  } while (0)
 
 int main() {
   agc::Core core;
@@ -318,6 +328,60 @@ int main() {
   assert(channel33Core.step());
   assert(channel33Core.getA() == 020000);
 
+  agc::Core tsOverflowCore;
+  constexpr uint16_t kTsScratch = 00120;
+  constexpr uint16_t kTsConst = agc::Core::kBootAddress + 012;
+  tsOverflowCore.writeFixed(agc::Core::kBootAddress,
+                            agc::Core::encodeBasic(3, kTsConst));
+  tsOverflowCore.writeFixed(agc::Core::kBootAddress + 1,
+                            agc::Core::encodeBasic(6, kTsConst));
+  tsOverflowCore.writeFixed(agc::Core::kBootAddress + 2,
+                            static_cast<uint16_t>(054000 | kTsScratch));
+  tsOverflowCore.writeFixed(
+      agc::Core::kBootAddress + 3,
+      agc::Core::encodeBasic(0, agc::Core::kBootAddress + 7));
+  tsOverflowCore.writeFixed(
+      agc::Core::kBootAddress + 4,
+      agc::Core::encodeBasic(0, agc::Core::kBootAddress + 4));
+  tsOverflowCore.writeFixed(kTsConst, 020000);
+  tsOverflowCore.start();
+  assert(tsOverflowCore.step());
+  assert(tsOverflowCore.getA() == 020000);
+  assert(tsOverflowCore.step());
+  assert(tsOverflowCore.getA() == 040000);
+  assert(tsOverflowCore.step());
+  assert(tsOverflowCore.getA() == agc::Core::fromInt(1));
+  assert(tsOverflowCore.readErasable(kTsScratch) == 0);
+  assert(tsOverflowCore.getZ() == agc::Core::kBootAddress + 4);
+
+  agc::Core mpZeroCore;
+  constexpr uint16_t kMpConst = agc::Core::kBootAddress + 013;
+  mpZeroCore.setA(agc::Core::kWordMask);
+  mpZeroCore.writeFixed(agc::Core::kBootAddress,
+                        agc::Core::kInstructionExtend);
+  mpZeroCore.writeFixed(agc::Core::kBootAddress + 1,
+                        agc::Core::encodeBasic(7, kMpConst));
+  mpZeroCore.writeFixed(kMpConst, agc::Core::fromInt(1));
+  mpZeroCore.start();
+  assert(mpZeroCore.step());
+  assert(mpZeroCore.step());
+  assert(mpZeroCore.getA() == agc::Core::kWordMask);
+  assert(mpZeroCore.readErasable(agc::Core::kRegL) ==
+         agc::Core::kWordMask);
+
+  agc::Core msuZeroCore;
+  constexpr uint16_t kMsuScratch = 00120;
+  msuZeroCore.writeErasable(kMsuScratch, 0);
+  msuZeroCore.writeFixed(agc::Core::kBootAddress,
+                         agc::Core::kInstructionExtend);
+  msuZeroCore.writeFixed(agc::Core::kBootAddress + 1,
+                         static_cast<uint16_t>(020000 | kMsuScratch));
+  msuZeroCore.start();
+  assert(msuZeroCore.step());
+  assert(msuZeroCore.step());
+  assert(msuZeroCore.getA() == 0);
+  assert(msuZeroCore.readErasable(kMsuScratch) == 0);
+
   agc::Core bzfCore;
   bzfCore.setA(0);
   bzfCore.writeFixed(agc::Core::kBootAddress,
@@ -361,27 +425,53 @@ int main() {
          agc::Core::encodeBasic(0, agc::Core::kBootAddress + 2));
 
   agc::Core resumeCore;
-  resumeCore.setA(agc::Core::fromInt(7));
+  constexpr uint16_t kResumeReturn = agc::Core::kBootAddress + 2;
+  constexpr uint16_t kForcedXchQ =
+      static_cast<uint16_t>(056000 | agc::Core::kRegQ);
   resumeCore.writeFixed(agc::Core::kBootAddress,
-                        agc::Core::encodeBasic(0,
-                                               agc::Core::kBootAddress + 2));
-  resumeCore.writeFixed(agc::Core::kBootAddress + 2,
-                        agc::Core::encodeBasic(0,
-                                               agc::Core::kBootAddress + 2));
+                        agc::Core::encodeBasic(3,
+                                               agc::Core::kBootAddress + 010));
+  resumeCore.writeFixed(agc::Core::kBootAddress + 010, 012345);
   resumeCore.writeFixed(04004, agc::Core::kInstructionResume);
   resumeCore.start();
   resumeCore.requestInterrupt(0);
-  assert(resumeCore.step());
+  uint16_t interruptedPc = 0;
+  uint16_t interruptedInstruction = 0;
+  assert(resumeCore.serviceInterruptEntry(&interruptedPc,
+                                          &interruptedInstruction));
+  assert(interruptedPc == agc::Core::kBootAddress);
+  assert(interruptedInstruction ==
+         agc::Core::encodeBasic(3, agc::Core::kBootAddress + 010));
   assert(resumeCore.readErasable(agc::Core::kRegZRUPT) ==
          agc::Core::kBootAddress);
   assert(resumeCore.readErasable(agc::Core::kRegBRUPT) ==
-         agc::Core::encodeBasic(0, agc::Core::kBootAddress + 2));
+         agc::Core::encodeBasic(3, agc::Core::kBootAddress + 010));
   assert(resumeCore.readErasable(agc::Core::kRegARUPT) == 0);
-  assert(resumeCore.getZ() == agc::Core::kBootAddress);
-  resumeCore.requestInterrupt(1);
+  assert(resumeCore.getZ() ==
+         agc::Core::interruptVectorAddress(agc::Core::kInterruptT6Rupt));
+
+  resumeCore.writeErasable(agc::Core::kRegZRUPT, kResumeReturn);
+  resumeCore.writeErasable(agc::Core::kRegBRUPT, kForcedXchQ);
+  resumeCore.writeErasable(agc::Core::kRegQ, 03335);
+  resumeCore.setA(0);
   assert(resumeCore.step());
-  assert(resumeCore.getZ() == agc::Core::kBootAddress + 2);
-  assert(resumeCore.pendingInterruptMask() != 0);
+  assert(resumeCore.getZ() == kResumeReturn);
+  resumeCore.requestInterrupt(1);
+  interruptedPc = 0;
+  interruptedInstruction = 0;
+  assert(resumeCore.serviceInterruptEntry(&interruptedPc,
+                                          &interruptedInstruction));
+  assert(interruptedPc == kResumeReturn);
+  assert(interruptedInstruction == kForcedXchQ);
+  assert(resumeCore.getA() == 0);
+  assert(resumeCore.readErasable(agc::Core::kRegQ) == 03335);
+  assert(resumeCore.getZ() ==
+         agc::Core::interruptVectorAddress(agc::Core::kInterruptT5Rupt));
+  assert(resumeCore.pendingInterruptMask() == 0);
+  assert(resumeCore.readErasable(agc::Core::kRegZRUPT) ==
+         kResumeReturn);
+  assert(resumeCore.readErasable(agc::Core::kRegBRUPT) ==
+         kForcedXchQ);
 
   return 0;
 }

@@ -6,3 +6,5 @@ embedded/tests/*.exe
 embedded/tests/agc_trace_candidate.csv
 embedded/tests/agc_trace_real_candidate.csv
 embedded/tests/agc_trace_real_cpu_candidate.csv
+embedded/tests/agc_trace_luminary_candidate.csv
+embedded/tests/agc_trace_real_smoke_yaagc.csv

@@ -4,9 +4,12 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <stdint.h>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -26,6 +29,7 @@ struct Options {
   TraceMode mode = TraceMode::Synthetic;
   uint32_t steps = 0;
   bool hardwareTiming = false;
+  std::string ropeBinPath;
 };
 
 struct TraceSnapshot {
@@ -156,6 +160,68 @@ void installTraceProgram(agc::Core& core) {
                   agc::Core::encodeBasic(0, agc::Core::kBootAddress + 020));
 }
 
+bool loadYayulRopeBinary(agc::Core& core, const std::string& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    std::cerr << "Could not open rope binary: " << path << "\n";
+    return false;
+  }
+
+  std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)),
+                             std::istreambuf_iterator<char>());
+  if (bytes.empty() || (bytes.size() % 2) != 0) {
+    std::cerr << "Invalid yaYUL rope binary byte count: " << bytes.size()
+              << "\n";
+    return false;
+  }
+
+  const size_t wordCount = bytes.size() / 2;
+  if ((wordCount % agc::Core::kFixedBankSize) != 0) {
+    std::cerr << "yaYUL rope binary does not contain whole fixed banks\n";
+    return false;
+  }
+
+  const size_t bankCount = wordCount / agc::Core::kFixedBankSize;
+  if (bankCount == 0 || bankCount > agc::Core::kFixedBanks) {
+    std::cerr << "Unsupported yaYUL rope bank count: " << bankCount << "\n";
+    return false;
+  }
+
+  std::vector<uint16_t> rawWords(wordCount, 0);
+  for (size_t i = 0; i < wordCount; ++i) {
+    rawWords[i] = static_cast<uint16_t>(
+        (((static_cast<uint16_t>(bytes[i * 2]) << 8) |
+          static_cast<uint16_t>(bytes[i * 2 + 1])) >>
+         1) &
+        agc::Core::kWordMask);
+  }
+
+  std::vector<uint16_t> words(wordCount, 0);
+  if (bankCount == agc::Core::kFixedBanks) {
+    constexpr uint8_t kYayulBankOrder[agc::Core::kFixedBanks] = {
+        2, 3, 0, 1, 4, 5, 6, 7, 8, 9, 10, 11,
+        12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35};
+    for (size_t sourceBank = 0; sourceBank < bankCount; ++sourceBank) {
+      const size_t actualBank = kYayulBankOrder[sourceBank];
+      const size_t sourceOffset = sourceBank * agc::Core::kFixedBankSize;
+      const size_t actualOffset = actualBank * agc::Core::kFixedBankSize;
+      for (size_t i = 0; i < agc::Core::kFixedBankSize; ++i) {
+        words[actualOffset + i] = rawWords[sourceOffset + i];
+      }
+    }
+  } else {
+    words = rawWords;
+  }
+
+  const agc::RopeImage image = {
+      words.data(),
+      static_cast<uint8_t>(bankCount),
+      path.c_str(),
+  };
+  return core.loadRopeImage(image);
+}
+
 bool parseUnsigned(const char* text, uint32_t* value) {
   if (text == nullptr || *text == '\0') {
     return false;
@@ -174,7 +240,8 @@ bool parseUnsigned(const char* text, uint32_t* value) {
 
 void printUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
-            << " [--mode synthetic|rope] [--steps N] [--hardware-timing]\n";
+            << " [--mode synthetic|rope] [--steps N] [--hardware-timing]"
+            << " [--rope-bin MAIN.agc.bin]\n";
 }
 
 bool parseOptions(int argc, char** argv, Options* options) {
@@ -196,6 +263,8 @@ bool parseOptions(int argc, char** argv, Options* options) {
       }
     } else if (std::strcmp(argv[i], "--hardware-timing") == 0) {
       options->hardwareTiming = true;
+    } else if (std::strcmp(argv[i], "--rope-bin") == 0 && i + 1 < argc) {
+      options->ropeBinPath = argv[++i];
     } else if (std::strcmp(argv[i], "--help") == 0) {
       return false;
     } else {
@@ -219,6 +288,11 @@ int main(int argc, char** argv) {
 
   if (options.mode == TraceMode::Synthetic) {
     installTraceProgram(core);
+  } else if (!options.ropeBinPath.empty()) {
+    if (!loadYayulRopeBinary(core, options.ropeBinPath)) {
+      std::cerr << "Failed to load yaYUL rope binary\n";
+      return 2;
+    }
   } else if (!core.loadRopeImage(embedded_rope::kImage)) {
     std::cerr << "Failed to load embedded rope image\n";
     return 2;

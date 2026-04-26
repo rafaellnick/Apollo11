@@ -6,6 +6,7 @@ param(
   [ValidateSet("Synthetic", "Rope")]
   [string]$Mode = "Synthetic",
   [int]$Steps = 0,
+  [string]$RopeBin = "",
   [switch]$HardwareTiming,
   [switch]$AllowRunnerFailure,
   [switch]$NoRun
@@ -58,11 +59,11 @@ function Invoke-TraceBuild {
   if ((Split-Path -Leaf $CompilerPath) -ieq "cl.exe") {
     & $CompilerPath /nologo /std:c++17 /EHsc /I embedded\shared `
       /I embedded\esp32_agc_core `
-      /Fe:$OutputPath embedded\tests\agc_trace_runner.cpp
+      /Fe:$OutputPath .\embedded\tests\agc_trace_runner.cpp
   } else {
     & $CompilerPath -std=c++17 -Wall -Wextra -pedantic `
       -I embedded\shared -I embedded\esp32_agc_core `
-      embedded\tests\agc_trace_runner.cpp -o $OutputPath
+      .\embedded\tests\agc_trace_runner.cpp -o $OutputPath
   }
 
   if ($LASTEXITCODE -ne 0) {
@@ -90,6 +91,9 @@ if ($Steps -gt 0) {
 }
 if ($HardwareTiming) {
   $traceArgs += "--hardware-timing"
+}
+if ($RopeBin.Trim().Length -gt 0) {
+  $traceArgs += @("--rope-bin", $RopeBin)
 }
 
 & $Output @traceArgs > $CandidateTrace

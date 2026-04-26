@@ -16,7 +16,7 @@ The intent is:
 
 ## Current status
 
-This is the first embedded AGC core layer, not yet a full AGC emulator.
+This is now a trace-validated embedded AGC core layer, not yet a full historical AGC.
 
 What is implemented now:
 
@@ -30,8 +30,9 @@ What is implemented now:
 - MCT-based instruction cycle accounting for core execution and scheduled peripheral timing
 - Block II interrupt-vector mapping for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
 - timer/counter pulses for `TIME1..TIME6`, `DOWNRUPT`, keyrupt, and downlink channel monitoring
-- a desktop yaAGC validation path that now passes 4096 CPU-only Comanche055 rows and 131072 faithful hardware-timing rows
+- a desktop yaAGC validation path that now passes 4096 CPU-only Comanche055 rows, 1048576 faithful Comanche055 rows, and 65536 faithful Luminary099 rows
 - a first machine-cycle timing layer for scaler steals, timer counter pulses, interrupt-entry rows, channel-10 DSKY output-row latches, channel `034/035` downrupt scheduling, uplink `INLINK`/`UPRUPT`, channel-13 radar/hand-controller traps, and channel-77 restart-monitor latches
+- yaAGC-aligned `DV`/`MP` double-precision arithmetic edge behavior and `RESUME`/`BRUPT` interrupt-substitution timing
 - physics-inspired mission telemetry helpers for ascent, coast, orbit, descent, and reentry
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
