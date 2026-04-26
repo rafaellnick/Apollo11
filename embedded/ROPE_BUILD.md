@@ -31,6 +31,8 @@ powershell -ExecutionPolicy Bypass -File embedded\tools\build_rope_image.ps1 -Pr
 
 The helper copies the selected source tree to a temporary build directory before assembly, so `MAIN.agc.bin`, the symbol table, and the listing are not written into `Comanche055/` or `Luminary099/`. It also creates temporary include aliases from each file's `# Filename:` metadata; this handles the local `Luminary099` checkout where two filenames differ from the names included by `MAIN.agc`. When assembly succeeds, it converts yaYUL's `MAIN.agc.bin` into `embedded/esp32_agc_core/rope_image.h`.
 
+The GitHub Apollo 11 source layout has a few lines whose yaYUL-significant indentation differs from the maintained VirtualAGC checkout. The helper normalizes those local numeric labels and applies two Comanche055 compatibility fixes only inside the temporary build copy; the historical source files in `Comanche055/` and `Luminary099/` are not rewritten.
+
 After conversion, the helper also writes `embedded/esp32_agc_core/rope_image.manifest.txt` with the selected program, source path, generated word count, bank count, and SHA-256 hashes of both `MAIN.agc.bin` and `rope_image.h`.
 
 To validate the source tree without requiring yaYUL yet:
@@ -85,6 +87,12 @@ CORE
 
 The repository now includes a deterministic desktop trace harness for validating the embedded core against a yaAGC/VirtualAGC reference trace.
 
+Generate the yaAGC reference trace:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\run_yaagc_reference_trace.ps1
+```
+
 Build and emit the current embedded-core trace:
 
 ```powershell
@@ -104,6 +112,15 @@ step,pc,instr,extended,a,l,q,z,eb,fb,bb,cyc,mct,irq,ch010,ch015
 ```
 
 `embedded/tests/agc_trace_runner.cpp` deliberately exercises the layers that need historical validation first: Block II opcode/quarter decoding, editing-safe register reads, 9-bit I/O channel operations, branch timing, and the core MCT counter. A trace generated from yaAGC/VirtualAGC should be normalized to the same CSV columns before using `embedded/tools/compare_agc_trace.ps1`.
+
+The first checked-in yaAGC reference trace is `embedded/tests/agc_trace_reference_yaagc.csv`. It is produced by compiling `embedded/tests/yaagc_reference_trace_driver.c` against VirtualAGC's `libyaAGC.a`; the helper searches for a sibling `..\VirtualAGC\yaAGC` checkout by default and accepts `-VirtualAgcRoot` or `-YaAgcDir` when the checkout lives elsewhere.
+
+To run the full local comparison:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\run_yaagc_reference_trace.ps1
+powershell -ExecutionPolicy Bypass -File embedded\tools\run_agc_trace_validation.ps1 -ReferenceTrace embedded\tests\agc_trace_reference_yaagc.csv
+```
 
 ## Current emulator status
 

@@ -1,3 +1,6 @@
 yaYUL.exe
+yaAGC.exe
 node_modules
 embedded/esp8266_dsky_slave/wifi_config.h
+embedded/tests/*.exe
+embedded/tests/agc_trace_candidate.csv

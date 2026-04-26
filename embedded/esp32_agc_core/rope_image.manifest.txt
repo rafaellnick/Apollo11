@@ -1,0 +1,10 @@
+program=Comanche055
+source=C:\Users\CS\Documents\Projetos CS - Rafael\Apollo-11\Comanche055
+build_dir=C:\Users\CS\AppData\Local\Temp\apollo11-rope-Comanche055-20260425-233007
+bin=C:\Users\CS\AppData\Local\Temp\apollo11-rope-Comanche055-20260425-233007\MAIN.agc.bin
+output_header=C:\Users\CS\Documents\Projetos CS - Rafael\Apollo-11\embedded\esp32_agc_core\rope_image.h
+word_count=36864
+bank_count=36
+bin_sha256=2E623D9FE43C0609CE4BAF4ACF4332AFA9D7FA8D580A8BFBF3494D319B9B29CE
+header_sha256=4AE5D023C7EEA7FB96F3D651555DF03F8642E059BB8A6B5CE0BA24F3CBFB4F84
+generated_utc=2026-04-26T02:30:10Z

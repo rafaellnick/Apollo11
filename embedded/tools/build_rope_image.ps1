@@ -45,6 +45,78 @@ function Get-DisplayPath {
     }
 }
 
+function Add-CommonToolRuntimePaths {
+    $runtimePaths = New-Object System.Collections.Generic.List[string]
+
+    if (Test-Path -LiteralPath "C:\msys64\usr\bin" -PathType Container) {
+        $runtimePaths.Add("C:\msys64\usr\bin")
+    }
+
+    if ($env:LOCALAPPDATA) {
+        $wingetPackages = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
+        if (Test-Path -LiteralPath $wingetPackages -PathType Container) {
+            Get-ChildItem -LiteralPath $wingetPackages -Directory -Filter "BrechtSanders.WinLibs*" -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    $mingwBin = Join-Path $_.FullName "mingw64\bin"
+                    if (Test-Path -LiteralPath $mingwBin -PathType Container) {
+                        $runtimePaths.Add($mingwBin)
+                    }
+                }
+        }
+    }
+
+    $pathParts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($part in ($env:PATH -split [System.IO.Path]::PathSeparator)) {
+        if ($part.Trim().Length -gt 0) {
+            [void]$pathParts.Add($part)
+        }
+    }
+
+    foreach ($runtimePath in $runtimePaths) {
+        if (-not $pathParts.Contains($runtimePath)) {
+            $env:PATH = "$runtimePath$([System.IO.Path]::PathSeparator)$env:PATH"
+            [void]$pathParts.Add($runtimePath)
+        }
+    }
+}
+
+function Normalize-YaYulTemporarySources {
+    param([string]$Directory)
+
+    $fixed = 0
+    $knownFixups = @{
+        "^ZEROERROR(\s)" = 'ZEROEROR$1'
+        "^GETDLEWD(\s)" = 'GETLEWD$1'
+    }
+
+    foreach ($file in Get-ChildItem -LiteralPath $Directory -Filter "*.agc" -File) {
+        $lines = Get-Content -LiteralPath $file.FullName
+        $changed = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*([+-]\d+D?)(\s+)(.*)$') {
+                $lines[$i] = " " + $Matches[1] + "`t`t" + $Matches[3]
+                $changed = $true
+                $fixed++
+            }
+
+            foreach ($pattern in $knownFixups.Keys) {
+                if ($lines[$i] -match $pattern) {
+                    $lines[$i] = $lines[$i] -replace $pattern, $knownFixups[$pattern]
+                    $changed = $true
+                    $fixed++
+                }
+            }
+        }
+
+        if ($changed) {
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllLines($file.FullName, $lines, $utf8NoBom)
+        }
+    }
+
+    return $fixed
+}
+
 function Find-YaYul {
     param([string]$ExplicitPath)
 
@@ -192,6 +264,7 @@ if ($null -eq $YaYul.Path) {
 }
 
 Write-Host "yaYUL: $($YaYul.Path)"
+Add-CommonToolRuntimePaths
 
 if ($ValidateOnly) {
     Write-Host "Validation only; assembly was not run."
@@ -214,6 +287,11 @@ foreach ($file in $SourceFiles) {
 }
 foreach ($aliasName in $AliasCopies.Keys) {
     Copy-Item -LiteralPath $AliasCopies[$aliasName] -Destination (Join-Path $BuildDir $aliasName) -Force
+}
+
+$NormalizedLocalLabels = Normalize-YaYulTemporarySources -Directory $BuildDir
+if ($NormalizedLocalLabels -gt 0) {
+    Write-Host "  normalized local numeric labels: $NormalizedLocalLabels"
 }
 
 $ListingPath = Join-Path $BuildDir "$Program.lst"

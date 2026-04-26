@@ -26,6 +26,19 @@ function Find-Compiler {
     }
   }
 
+  if ($env:LOCALAPPDATA) {
+    $wingetPackages = Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages"
+    if (Test-Path -LiteralPath $wingetPackages -PathType Container) {
+      $winlibsCompilers = Get-ChildItem -LiteralPath $wingetPackages -Directory -Filter "BrechtSanders.WinLibs*" -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName "mingw64\bin\g++.exe" } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+
+      foreach ($compiler in $winlibsCompilers) {
+        return (Resolve-Path -LiteralPath $compiler).ProviderPath
+      }
+    }
+  }
+
   Write-Error "No C++ compiler found. Install g++, clang++, or Visual Studio Build Tools, then run this script again."
 }
 
@@ -51,6 +64,11 @@ function Invoke-TraceBuild {
 }
 
 $compilerPath = Find-Compiler $Compiler
+$compilerDir = Split-Path -Parent $compilerPath
+if ($compilerDir -ne "" -and
+    (($env:PATH -split [System.IO.Path]::PathSeparator) -notcontains $compilerDir)) {
+  $env:PATH = "$compilerDir$([System.IO.Path]::PathSeparator)$env:PATH"
+}
 Write-Host "Using compiler: $compilerPath"
 Invoke-TraceBuild -CompilerPath $compilerPath -OutputPath $Output
 Write-Host "Built trace runner: $Output"
