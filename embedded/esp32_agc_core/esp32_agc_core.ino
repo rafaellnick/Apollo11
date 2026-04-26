@@ -18,11 +18,15 @@ constexpr unsigned long kTelemetryPeriodMs = 250;
 constexpr unsigned long kMonitorPeriodMs = 1000;
 constexpr unsigned long kJoystickSamplePeriodMs = 50;
 constexpr unsigned long kCompActyPulseMs = 150;
+constexpr unsigned long kLaunchEventMonitorMs = 1000;
 constexpr uint16_t kInstructionsPerLoop = 64;
 constexpr int kAdcMax = 4095;
 constexpr int kJoystickDeadzone = 80;
 constexpr int kJoystickOutputMax = 1000;
 constexpr uint8_t kJoystickCalibrationSamples = 32;
+constexpr int16_t kLaunchStartSecond = -10;
+constexpr int16_t kLaunchOrbitInsertionSecond = 705;
+constexpr uint8_t kLaunchDefaultTimeScale = 20;
 
 HardwareSerial panelSerial(2);
 agc::Core agcCore;
@@ -53,11 +57,51 @@ enum class UsbOutputMode : uint8_t {
   Both,
 };
 
+enum class LaunchMode : uint8_t {
+  Off = 0,
+  Running,
+  Complete,
+};
+
+struct LaunchEvent {
+  int16_t second;
+  const char* label;
+};
+
+constexpr LaunchEvent kLaunchEvents[] = {
+    {-10, "TERMINAL COUNT"},
+    {-8, "F-1 IGNITION"},
+    {0, "LIFTOFF"},
+    {13, "ROLL PROGRAM"},
+    {34, "ROLL COMPLETE"},
+    {83, "MAX-Q"},
+    {137, "S-IC INBOARD CUTOFF"},
+    {164, "S-IC/S-II STAGING"},
+    {193, "INTERSTAGE SEP"},
+    {197, "LES JETTISON"},
+    {327, "S-IVB TO COI"},
+    {462, "S-II INBOARD CUTOFF"},
+    {502, "MIXTURE SHIFT"},
+    {540, "ABORT MODE IV"},
+    {555, "S-II/S-IVB STAGING"},
+    {705, "PARKING ORBIT"},
+};
+
 EntryMode entryMode = EntryMode::Idle;
 UsbOutputMode usbOutputMode = UsbOutputMode::Clean;
+LaunchMode launchMode = LaunchMode::Off;
 char pendingDigits[3] = {'0', '0', '\0'};
 uint8_t pendingCount = 0;
 uint32_t manualLampMask = 0;
+uint32_t launchLampMask = 0;
+unsigned long launchStartMs = 0;
+unsigned long lastLaunchMonitorMs = 0;
+int16_t launchSecond = 0;
+int16_t launchAltitudeKm = 0;
+int16_t launchVelocityMs = 0;
+uint8_t launchTimeScale = kLaunchDefaultTimeScale;
+int8_t lastLaunchEventIndex = -1;
+char launchPhase[24] = "IDLE";
 
 struct JoystickState {
   int rawX = 0;
@@ -164,7 +208,7 @@ void calibrateJoystick() {
 }
 
 void syncLamps() {
-  state.lampMask = manualLampMask;
+  state.lampMask = manualLampMask | launchLampMask;
   dsky::setLamp(&state, dsky::kLampProg, entryMode != EntryMode::Idle);
   dsky::setLamp(&state, dsky::kLampOprErr,
                 agcCore.readErasable(agc::Core::kPanelAlarm) != 0 ||
@@ -190,6 +234,13 @@ void refreshDskyFromCore() {
                   agcCore.readErasable(agc::Core::kInputRhcY));
     formatAgcWord(state.r3, sizeof(state.r3),
                   agcCore.readErasable(agc::Core::kInputRhcSwitch));
+  } else if (launchMode != LaunchMode::Off && state.noun == 62) {
+    formatAgcWord(state.r1, sizeof(state.r1),
+                  agc::Core::fromInt(launchSecond));
+    formatAgcWord(state.r2, sizeof(state.r2),
+                  agc::Core::fromInt(launchAltitudeKm));
+    formatAgcWord(state.r3, sizeof(state.r3),
+                  agc::Core::fromInt(launchVelocityMs));
   } else {
     formatAgcWord(state.r1, sizeof(state.r1),
                   agcCore.readErasable(agc::Core::kPanelCounter));
@@ -201,7 +252,10 @@ void refreshDskyFromCore() {
   state.alarm = static_cast<uint16_t>(
       abs(agc::Core::toInt(agcCore.readErasable(agc::Core::kPanelAlarm))) %
       10000);
-  state.missionSeconds = agcCore.cycles() / 1024UL;
+  state.missionSeconds =
+      launchMode == LaunchMode::Off
+          ? agcCore.cycles() / 1024UL
+          : static_cast<uint32_t>(launchSecond > 0 ? launchSecond : 0);
   syncLamps();
   stateDirty = true;
 }
@@ -224,6 +278,286 @@ void raiseAlarm(uint16_t alarmCode) {
                         agc::Core::fromInt(static_cast<int16_t>(alarmCode)));
   state.flashVerbNoun = true;
   refreshDskyFromCore();
+}
+
+int32_t lerpInt(int32_t startValue, int32_t endValue, int16_t second,
+                int16_t startSecond, int16_t endSecond) {
+  if (second <= startSecond) {
+    return startValue;
+  }
+
+  if (second >= endSecond || endSecond == startSecond) {
+    return endValue;
+  }
+
+  return startValue +
+         ((endValue - startValue) * (second - startSecond)) /
+             (endSecond - startSecond);
+}
+
+int8_t launchEventIndexForSecond(int16_t second) {
+  int8_t index = -1;
+  for (uint8_t i = 0; i < sizeof(kLaunchEvents) / sizeof(kLaunchEvents[0]);
+       ++i) {
+    if (second >= kLaunchEvents[i].second) {
+      index = static_cast<int8_t>(i);
+    }
+  }
+
+  return index;
+}
+
+int16_t currentScaledLaunchSecond() {
+  const uint64_t elapsedMs = millis() - launchStartMs;
+  const uint64_t scaledSeconds =
+      (elapsedMs * static_cast<uint64_t>(launchTimeScale)) / 1000ULL;
+  const int32_t second =
+      static_cast<int32_t>(kLaunchStartSecond) +
+      static_cast<int32_t>(scaledSeconds);
+
+  if (second < kLaunchStartSecond) {
+    return kLaunchStartSecond;
+  }
+
+  if (second > kLaunchOrbitInsertionSecond) {
+    return kLaunchOrbitInsertionSecond;
+  }
+
+  return static_cast<int16_t>(second);
+}
+
+void computeLaunchTelemetry(int16_t second) {
+  const int8_t eventIndex = launchEventIndexForSecond(second);
+  if (eventIndex >= 0) {
+    dsky::copyField(launchPhase, sizeof(launchPhase),
+                    kLaunchEvents[eventIndex].label);
+  }
+
+  if (second < 0) {
+    launchAltitudeKm = 0;
+    launchVelocityMs = 0;
+    launchLampMask = dsky::kLampProg | dsky::kLampKeyRel;
+    return;
+  }
+
+  launchLampMask = dsky::kLampProg | dsky::kLampTracker;
+
+  if (second < kLaunchOrbitInsertionSecond) {
+    launchLampMask |= dsky::kLampUplinkActy;
+  }
+
+  if (second <= 83) {
+    launchAltitudeKm =
+        static_cast<int16_t>(lerpInt(0, 14, second, 0, 83));
+    launchVelocityMs =
+        static_cast<int16_t>(lerpInt(0, 520, second, 0, 83));
+    return;
+  }
+
+  if (second <= 164) {
+    launchAltitudeKm =
+        static_cast<int16_t>(lerpInt(14, 65, second, 83, 164));
+    launchVelocityMs =
+        static_cast<int16_t>(lerpInt(520, 2700, second, 83, 164));
+    return;
+  }
+
+  if (second <= 197) {
+    launchAltitudeKm =
+        static_cast<int16_t>(lerpInt(65, 95, second, 164, 197));
+    launchVelocityMs =
+        static_cast<int16_t>(lerpInt(2700, 3200, second, 164, 197));
+    return;
+  }
+
+  if (second <= 462) {
+    launchAltitudeKm =
+        static_cast<int16_t>(lerpInt(95, 176, second, 197, 462));
+    launchVelocityMs =
+        static_cast<int16_t>(lerpInt(3200, 5291, second, 197, 462));
+    return;
+  }
+
+  if (second <= 555) {
+    launchAltitudeKm =
+        static_cast<int16_t>(lerpInt(176, 187, second, 462, 555));
+    launchVelocityMs =
+        static_cast<int16_t>(lerpInt(5291, 7049, second, 462, 555));
+    return;
+  }
+
+  launchAltitudeKm =
+      static_cast<int16_t>(lerpInt(187, 185, second, 555,
+                                  kLaunchOrbitInsertionSecond));
+  launchVelocityMs =
+      static_cast<int16_t>(lerpInt(7049, 7800, second, 555,
+                                  kLaunchOrbitInsertionSecond));
+}
+
+void configureLaunchDisplay() {
+  setCoreDisplayRegister(agc::Core::kPanelProgram, 11);
+  setCoreDisplayRegister(agc::Core::kPanelVerb, 16);
+  setCoreDisplayRegister(agc::Core::kPanelNoun, 62);
+  agcCore.writeErasable(agc::Core::kPanelAlarm, 0);
+  state.flashVerbNoun = false;
+}
+
+void printLaunchTime(Stream& port, int16_t second) {
+  port.print(second < 0 ? F("T-") : F("T+"));
+  int16_t remaining = second < 0 ? static_cast<int16_t>(-second) : second;
+  const uint8_t minutes = static_cast<uint8_t>(remaining / 60);
+  const uint8_t seconds = static_cast<uint8_t>(remaining % 60);
+
+  if (minutes < 10) {
+    port.print('0');
+  }
+  port.print(minutes);
+  port.print(':');
+  if (seconds < 10) {
+    port.print('0');
+  }
+  port.print(seconds);
+}
+
+void emitLaunchStatus(Stream& port) {
+  port.print(F("LAUNCH "));
+  printLaunchTime(port, launchSecond);
+  port.print(F(" "));
+  port.print(launchPhase);
+  port.print(F(" | P11 V16 N62"));
+  port.print(F(" | R1 T"));
+  port.print(launchSecond >= 0 ? '+' : '-');
+  port.print(abs(launchSecond));
+  port.print(F(" R2 ALT_KM "));
+  port.print(launchAltitudeKm);
+  port.print(F(" R3 VEL_MS "));
+  port.print(launchVelocityMs);
+  port.print(F(" | x"));
+  port.print(launchTimeScale);
+  port.println(launchMode == LaunchMode::Complete ? F(" COMPLETE") : F(""));
+}
+
+void startLaunchSimulation() {
+  launchMode = LaunchMode::Running;
+  launchStartMs = millis();
+  lastLaunchMonitorMs = 0;
+  lastLaunchEventIndex = -1;
+  launchSecond = kLaunchStartSecond;
+  computeLaunchTelemetry(launchSecond);
+  configureLaunchDisplay();
+  refreshDskyFromCore();
+
+  Serial.print(F("Apollo 11 launch simulation started at x"));
+  Serial.println(launchTimeScale);
+  emitLaunchStatus(Serial);
+}
+
+void stopLaunchSimulation(bool resetPanel) {
+  launchMode = LaunchMode::Off;
+  launchLampMask = 0;
+  lastLaunchEventIndex = -1;
+  dsky::copyField(launchPhase, sizeof(launchPhase), "IDLE");
+
+  if (resetPanel) {
+    setCoreDisplayRegister(agc::Core::kPanelProgram, 0);
+    setCoreDisplayRegister(agc::Core::kPanelVerb, 16);
+    setCoreDisplayRegister(agc::Core::kPanelNoun, 36);
+  }
+
+  refreshDskyFromCore();
+  Serial.println(F("Apollo 11 launch simulation stopped."));
+}
+
+void setLaunchTimeScale(uint8_t scale) {
+  if (scale == 0) {
+    scale = 1;
+  }
+
+  if (scale > 100) {
+    scale = 100;
+  }
+
+  int16_t currentSecond = launchSecond;
+  if (launchMode == LaunchMode::Running) {
+    currentSecond = currentScaledLaunchSecond();
+  }
+
+  launchTimeScale = scale;
+
+  if (launchMode == LaunchMode::Running) {
+    const uint32_t elapsedMs =
+        static_cast<uint32_t>(
+            (static_cast<uint32_t>(currentSecond - kLaunchStartSecond) *
+             1000UL) /
+            launchTimeScale);
+    launchStartMs = millis() - elapsedMs;
+  }
+
+  Serial.print(F("Launch simulation speed x"));
+  Serial.println(launchTimeScale);
+}
+
+void updateLaunchSimulation() {
+  if (launchMode != LaunchMode::Running) {
+    return;
+  }
+
+  const int16_t nextSecond = currentScaledLaunchSecond();
+  const unsigned long now = millis();
+  const bool secondChanged = nextSecond != launchSecond;
+  const bool monitorDue =
+      lastLaunchMonitorMs == 0 ||
+      now - lastLaunchMonitorMs >= kLaunchEventMonitorMs;
+
+  if (!secondChanged && !monitorDue) {
+    return;
+  }
+
+  launchSecond = nextSecond;
+  computeLaunchTelemetry(launchSecond);
+  const bool reachedOrbit = launchSecond >= kLaunchOrbitInsertionSecond;
+  if (reachedOrbit) {
+    launchMode = LaunchMode::Complete;
+    launchLampMask = dsky::kLampProg | dsky::kLampTracker;
+    dsky::copyField(launchPhase, sizeof(launchPhase), "PARKING ORBIT");
+  }
+
+  configureLaunchDisplay();
+  refreshDskyFromCore();
+
+  const int8_t eventIndex = launchEventIndexForSecond(launchSecond);
+  if (eventIndex != lastLaunchEventIndex) {
+    lastLaunchEventIndex = eventIndex;
+    pulseCompActy();
+    emitLaunchStatus(Serial);
+  } else if (monitorDue) {
+    emitLaunchStatus(Serial);
+  }
+
+  lastLaunchMonitorMs = now;
+}
+
+void handleDskyEnterCommand() {
+  const uint8_t verb =
+      clampDisplayCode(agcCore.readErasable(agc::Core::kPanelVerb));
+  const uint8_t noun =
+      clampDisplayCode(agcCore.readErasable(agc::Core::kPanelNoun));
+
+  if (verb == 37 && noun == 11) {
+    startLaunchSimulation();
+    return;
+  }
+
+  if (verb == 37 && noun == 0) {
+    stopLaunchSimulation(true);
+    return;
+  }
+
+  if (verb == 37 && noun == 12) {
+    setLaunchTimeScale(1);
+    startLaunchSimulation();
+    return;
+  }
 }
 
 void endEntry() {
@@ -347,6 +681,8 @@ void handleKey(dsky::Key key) {
     case dsky::Key::Enter:
       if (entryMode != EntryMode::Idle && pendingCount == 2) {
         applyPendingEntry();
+      } else if (entryMode == EntryMode::Idle) {
+        handleDskyEnterCommand();
       }
       pulseCompActy();
       break;
@@ -483,7 +819,20 @@ void emitCleanStatus(Stream& port) {
   port.print(F(" | CYC "));
   port.print(agcCore.cycles());
   port.print(F(" | "));
-  port.println(runStateText());
+  port.print(runStateText());
+  if (launchMode != LaunchMode::Off) {
+    port.print(F(" | ASC "));
+    printLaunchTime(port, launchSecond);
+    port.print(' ');
+    port.print(launchPhase);
+    port.print(F(" ALT "));
+    port.print(launchAltitudeKm);
+    port.print(F("km VEL "));
+    port.print(launchVelocityMs);
+    port.print(F("m/s x"));
+    port.print(launchTimeScale);
+  }
+  port.println();
 }
 
 bool usbWantsRawState() {
@@ -525,6 +874,8 @@ void handleConsoleCommand(char* line) {
     Serial.println(F("  POKE,<octal-address>,<octal-word>"));
     Serial.println(F("  JOY JOYCAL"));
     Serial.println(F("  STATUS"));
+    Serial.println(F("  LAUNCH LAUNCH,STOP LAUNCH,STATUS"));
+    Serial.println(F("  LAUNCH,SPEED,<1-100> LAUNCH,REALTIME"));
     Serial.println(F("  USB,CLEAN USB,RAW USB,BOTH USB,QUIET"));
     Serial.println(F("  ALARM,<code> CLEARALARM"));
     return;
@@ -550,6 +901,10 @@ void handleConsoleCommand(char* line) {
   }
 
   if (strcmp(line, "RESET") == 0) {
+    launchMode = LaunchMode::Off;
+    launchLampMask = 0;
+    lastLaunchEventIndex = -1;
+    dsky::copyField(launchPhase, sizeof(launchPhase), "IDLE");
     agcCore.reset();
     agcCore.start();
     state.flashVerbNoun = false;
@@ -606,6 +961,32 @@ void handleConsoleCommand(char* line) {
     return;
   }
 
+  if (strcmp(line, "LAUNCH") == 0) {
+    startLaunchSimulation();
+    return;
+  }
+
+  if (strcmp(line, "LAUNCH,STOP") == 0) {
+    stopLaunchSimulation(true);
+    return;
+  }
+
+  if (strcmp(line, "LAUNCH,STATUS") == 0) {
+    emitLaunchStatus(Serial);
+    return;
+  }
+
+  if (strcmp(line, "LAUNCH,REALTIME") == 0) {
+    setLaunchTimeScale(1);
+    return;
+  }
+
+  if (strncmp(line, "LAUNCH,SPEED,", 13) == 0) {
+    setLaunchTimeScale(
+        static_cast<uint8_t>(strtoul(line + 13, nullptr, 10)));
+    return;
+  }
+
   if (strncmp(line, "PEEK,", 5) == 0) {
     const uint16_t address = parseOctal(line + 5);
     Serial.print(F("PEEK,"));
@@ -642,10 +1023,16 @@ void handleConsoleCommand(char* line) {
 }
 
 void handlePanelLine(char* line) {
+  char scratch[dsky::kLineBufferSize];
+  dsky::copyField(scratch, sizeof(scratch), line);
+
   dsky::Key key = dsky::Key::None;
-  if (dsky::parseKeyLine(line, &key)) {
+  if (dsky::parseKeyLine(scratch, &key)) {
     handleKey(key);
+    return;
   }
+
+  handleConsoleCommand(line);
 }
 
 void handleUsbLine(char* line) {
@@ -742,6 +1129,8 @@ void loop() {
     agcCore.runFor(kInstructionsPerLoop);
     refreshDskyFromCore();
   }
+
+  updateLaunchSimulation();
 
   if (millis() >= compActyUntilMs &&
       dsky::lampEnabled(state, dsky::kLampCompActy)) {

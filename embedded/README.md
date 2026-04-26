@@ -24,6 +24,7 @@ What is implemented now:
 - a reusable `agc::Core` with 15-bit words, erasable/fixed memory, register aliases, and a starter instruction loop
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
+- an Apollo 11 launch/ascent monitor simulation for first DSKY mission tests
 - an `ESP8266` DSKY slave with a Wi-Fi browser interface for the first bench test
 - a `Mega` starter that scans buttons, drives lamps, and mirrors state to an LCD
 
@@ -108,6 +109,36 @@ N
 9
 ```
 
+## Apollo 11 Launch Simulation
+
+The ESP32 has a first launch monitor simulation for bench testing the DSKY flow. It is not yet the real Comanche rope running the Saturn V ascent. It is a mission sequencer that drives DSKY displays and serial status through major Apollo 11 ascent events: terminal count, liftoff, roll program, Max-Q, staging, S-IVB burn, and parking orbit insertion.
+
+Start it from the Web DSKY:
+
+```text
+VERB 37 NOUN 11 ENTR
+```
+
+Stop it from the Web DSKY:
+
+```text
+VERB 37 NOUN 00 ENTR
+```
+
+Start it in real time instead of accelerated time:
+
+```text
+VERB 37 NOUN 12 ENTR
+```
+
+During the launch simulation the display changes to `P11 V16 N62`:
+
+- `R1`: mission time in seconds, negative during the final countdown
+- `R2`: approximate altitude in kilometers
+- `R3`: approximate velocity in meters per second
+
+The default launch simulation speed is `x20`, so the 11 minute 45 second ascent to parking orbit runs in about 36 seconds. Use the ESP32 USB serial command `LAUNCH,SPEED,<1-100>` to change that speed.
+
 ## PC Monitoring
 
 Open the ESP32 USB serial monitor at `115200`.
@@ -134,6 +165,11 @@ Useful ESP32 USB commands:
 - `POKE,<octal-address>,<octal-word>`
 - `JOY`
 - `JOYCAL`
+- `LAUNCH`
+- `LAUNCH,STOP`
+- `LAUNCH,STATUS`
+- `LAUNCH,SPEED,<1-100>`
+- `LAUNCH,REALTIME`
 - `USB,CLEAN`
 - `USB,RAW`
 - `USB,BOTH`
