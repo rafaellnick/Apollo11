@@ -34,12 +34,60 @@ int main() {
   core.writeErasable(agc::Core::kRegSR, 040002);
   assert(core.readErasable(agc::Core::kRegSR) == 060001);
 
+  core.writeErasable(agc::Core::kRegEDOP, 077777);
+  assert(core.readErasable(agc::Core::kRegEDOP) == 000177);
+
   uint16_t bankWords[agc::Core::kFixedBankSize] = {};
   bankWords[0] = agc::Core::encodeBasic(0, agc::Core::kBootAddress);
   assert(core.loadFixedBank(3, bankWords, agc::Core::kFixedBankSize));
 
   core.requestInterrupt(1);
   assert(core.pendingInterruptMask() != 0);
+
+  agc::Core hintCore;
+  hintCore.writeFixed(agc::Core::kBootAddress,
+                      agc::Core::kInstructionInhint);
+  hintCore.writeFixed(agc::Core::kBootAddress + 1,
+                      agc::Core::kInstructionRelint);
+  hintCore.writeFixed(agc::Core::kBootAddress + 2,
+                      agc::Core::encodeBasic(0, agc::Core::kBootAddress + 2));
+  hintCore.writeFixed(04004, agc::Core::encodeBasic(0, 04004));
+  hintCore.start();
+  assert(hintCore.step());
+  assert(!hintCore.interruptsEnabled());
+  hintCore.requestInterrupt(0);
+  assert(hintCore.step());
+  assert(hintCore.interruptsEnabled());
+  assert(hintCore.pendingInterruptMask() != 0);
+  assert(hintCore.step());
+  assert(hintCore.pendingInterruptMask() == 0);
+  assert(hintCore.readErasable(agc::Core::kRegZRUPT) ==
+         agc::Core::kBootAddress + 2);
+  assert(hintCore.readErasable(agc::Core::kRegBRUPT) ==
+         agc::Core::encodeBasic(0, agc::Core::kBootAddress + 2));
+
+  agc::Core resumeCore;
+  resumeCore.setA(agc::Core::fromInt(7));
+  resumeCore.writeFixed(agc::Core::kBootAddress,
+                        agc::Core::encodeBasic(0,
+                                               agc::Core::kBootAddress + 2));
+  resumeCore.writeFixed(agc::Core::kBootAddress + 2,
+                        agc::Core::encodeBasic(0,
+                                               agc::Core::kBootAddress + 2));
+  resumeCore.writeFixed(04004, agc::Core::kInstructionResume);
+  resumeCore.start();
+  resumeCore.requestInterrupt(0);
+  assert(resumeCore.step());
+  assert(resumeCore.readErasable(agc::Core::kRegZRUPT) ==
+         agc::Core::kBootAddress);
+  assert(resumeCore.readErasable(agc::Core::kRegBRUPT) ==
+         agc::Core::encodeBasic(0, agc::Core::kBootAddress + 2));
+  assert(resumeCore.readErasable(agc::Core::kRegARUPT) == 0);
+  assert(resumeCore.getZ() == agc::Core::kBootAddress);
+  resumeCore.requestInterrupt(1);
+  assert(resumeCore.step());
+  assert(resumeCore.getZ() == agc::Core::kBootAddress + 2);
+  assert(resumeCore.pendingInterruptMask() != 0);
 
   return 0;
 }

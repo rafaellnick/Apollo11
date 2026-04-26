@@ -39,12 +39,20 @@ class Core {
   static constexpr uint16_t kRegARUPT = 00010;
   static constexpr uint16_t kRegLRUPT = 00011;
   static constexpr uint16_t kRegQRUPT = 00012;
-  static constexpr uint16_t kRegZRUPT = 00013;
-  static constexpr uint16_t kRegBRUPT = 00014;
+  static constexpr uint16_t kRegSAMPTIME1 = 00013;
+  static constexpr uint16_t kRegSAMPTIME2 = 00014;
+  static constexpr uint16_t kRegZRUPT = 00015;
+  static constexpr uint16_t kRegBBRUPT = 00016;
+  static constexpr uint16_t kRegBRUPT = 00017;
   static constexpr uint16_t kRegCYR = 00020;
   static constexpr uint16_t kRegSR = 00021;
   static constexpr uint16_t kRegCYL = 00022;
   static constexpr uint16_t kRegEDOP = 00023;
+
+  static constexpr uint16_t kInstructionRelint = 00003;
+  static constexpr uint16_t kInstructionInhint = 00004;
+  static constexpr uint16_t kInstructionExtend = 00006;
+  static constexpr uint16_t kInstructionResume = 050017;
 
   static constexpr uint16_t kBootAddress = 04000;
   static constexpr uint16_t kPanelCounter = 00100;
@@ -91,6 +99,8 @@ class Core {
     indexPending_ = false;
     indexValue_ = 0;
     extendPending_ = false;
+    forcedInstructionPending_ = false;
+    forcedInstruction_ = 0;
     interruptsEnabled_ = true;
     interruptsInhibited_ = false;
     pendingInterruptMask_ = 0;
@@ -144,13 +154,22 @@ class Core {
     serviceInterrupt();
 
     const uint16_t pc = getZ();
-    uint16_t instruction = read(pc);
+    uint16_t instruction = 0;
+    if (forcedInstructionPending_) {
+      instruction = forcedInstruction_;
+      forcedInstructionPending_ = false;
+      forcedInstruction_ = 0;
+    } else {
+      instruction = read(pc);
+    }
     setZ(incrementAddress(pc, 1));
 
+    bool indexedInstruction = false;
     if (indexPending_) {
       instruction = applyIndex(instruction, indexValue_);
       indexPending_ = false;
       indexValue_ = 0;
+      indexedInstruction = true;
     }
 
     lastInstruction_ = instruction;
@@ -163,7 +182,7 @@ class Core {
       extendPending_ = false;
       executeExtended(lastOpcode_, operand);
     } else {
-      executeBasic(lastOpcode_, operand);
+      executeBasic(lastOpcode_, operand, indexedInstruction);
     }
 
     cycles_++;
@@ -230,6 +249,9 @@ class Core {
         break;
       case kRegCYL:
         value = rotateLeft(value);
+        break;
+      case kRegEDOP:
+        value = editPolishOpcode(value);
         break;
       default:
         break;
@@ -439,6 +461,17 @@ class Core {
                                  ((word >> 1) & kPositiveMask));
   }
 
+  static uint16_t editPolishOpcode(uint16_t word) {
+    return static_cast<uint16_t>((word >> 7) & 0177);
+  }
+
+  static bool isInterruptBoundaryInstruction(uint16_t instruction) {
+    instruction &= kWordMask;
+    return instruction == kInstructionRelint ||
+           instruction == kInstructionInhint ||
+           instruction == kInstructionExtend;
+  }
+
   uint8_t selectedFixedBank() const {
     const uint8_t bank =
         static_cast<uint8_t>(readErasable(kRegFBANK) & 077);
@@ -468,10 +501,14 @@ class Core {
     return true;
   }
 
-  void executeBasic(uint8_t opcode, uint16_t operand) {
+  void executeBasic(uint8_t opcode, uint16_t operand, bool indexedInstruction) {
     switch (opcode & 07) {
       case 0:
-        if (operand == kRegBBANK) {
+        if (!indexedInstruction && operand == kInstructionRelint) {
+          interruptsEnabled_ = true;
+        } else if (!indexedInstruction && operand == kInstructionInhint) {
+          interruptsEnabled_ = false;
+        } else if (!indexedInstruction && operand == kInstructionExtend) {
           extendPending_ = true;
         } else {
           executeTc(operand);
@@ -491,7 +528,11 @@ class Core {
         setA(negate(read(operand)));
         break;
       case 5:
-        write(operand, getA());
+        if (!indexedInstruction && operand == kRegBRUPT) {
+          resumeFromInterrupt();
+        } else {
+          write(operand, getA());
+        }
         break;
       case 6:
         setA(addOnesComplement(getA(), read(operand)));
@@ -561,7 +602,15 @@ class Core {
 
   bool serviceInterrupt() {
     if (!interruptsEnabled_ || interruptsInhibited_ ||
-        pendingInterruptMask_ == 0) {
+        pendingInterruptMask_ == 0 || extendPending_ ||
+        forcedInstructionPending_) {
+      return false;
+    }
+
+    const uint16_t interruptedPc = getZ();
+    uint16_t interruptedInstruction = read(interruptedPc);
+    if (!indexPending_ &&
+        isInterruptBoundaryInstruction(interruptedInstruction)) {
       return false;
     }
 
@@ -572,10 +621,14 @@ class Core {
 
       pendingInterruptMask_ &= static_cast<uint8_t>(~(1U << i));
       activeInterrupt_ = i;
-      writeErasable(kRegZRUPT, getZ());
-      writeErasable(kRegQRUPT, readErasable(kRegQ));
-      writeErasable(kRegARUPT, getA());
-      writeErasable(kRegLRUPT, readErasable(kRegL));
+      if (indexPending_) {
+        interruptedInstruction =
+            applyIndex(interruptedInstruction, indexValue_);
+        indexPending_ = false;
+        indexValue_ = 0;
+      }
+      writeErasable(kRegZRUPT, interruptedPc);
+      writeErasable(kRegBRUPT, interruptedInstruction);
       interruptsInhibited_ = true;
       setZ(static_cast<uint16_t>(04004 + i * 4));
       return true;
@@ -585,10 +638,9 @@ class Core {
   }
 
   void resumeFromInterrupt() {
-    setA(readErasable(kRegARUPT));
-    writeErasable(kRegL, readErasable(kRegLRUPT));
-    writeErasable(kRegQ, readErasable(kRegQRUPT));
     setZ(readErasable(kRegZRUPT));
+    forcedInstruction_ = readErasable(kRegBRUPT);
+    forcedInstructionPending_ = true;
     interruptsInhibited_ = false;
   }
 
@@ -641,6 +693,8 @@ class Core {
   bool indexPending_ = false;
   uint16_t indexValue_ = 0;
   bool extendPending_ = false;
+  bool forcedInstructionPending_ = false;
+  uint16_t forcedInstruction_ = 0;
   bool interruptsEnabled_ = true;
   bool interruptsInhibited_ = false;
   uint8_t pendingInterruptMask_ = 0;

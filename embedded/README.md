@@ -24,6 +24,8 @@ What is implemented now:
 - a reusable `agc::Core` with 15-bit words, erasable/fixed memory, register aliases, and a starter instruction loop
 - fixed-bank rope image loading hooks for `yaYUL` output
 - initial I/O channel, interrupt, and extended-instruction plumbing in the AGC core
+- a deterministic peripheral layer for keyrupt/uplink, downrupt, and downlink channel monitoring
+- physics-inspired mission telemetry helpers for ascent, coast, orbit, descent, and reentry
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
 - an Apollo 11 launch/ascent monitor simulation for first DSKY mission tests
@@ -38,19 +40,24 @@ The ESP32 core currently runs a tiny AGC bring-up program that increments an era
 ## Folder layout
 
 - `shared/agc_core.h`: first AGC CPU/memory layer
+- `shared/agc_peripherals.h`: deterministic keyrupt/downrupt/downlink peripheral model
 - `shared/dsky_protocol.h`: protocol, key definitions, lamp bits, frame parsing
+- `shared/mission_physics.h`: lightweight mission telemetry model
 - `esp32_agc_core/esp32_agc_core.ino`: ESP32 AGC core shell
 - `esp32_agc_core/rope_image.h`: generated or placeholder embedded rope image
 - `APOLLO11_MISSION_PROGRAM.md`: command table for the Apollo 11 mission program layer
 - `LAUNCH_SIMULATION_MANUAL.md`: launch simulation operating manual
 - `ROPE_BUILD.md`: rope conversion and loading path
 - `tools/rope_to_header.py`: converts rope word dumps into an ESP32 header
+- `tools/build_rope_image.ps1`: validates `Comanche055`/`Luminary099`, runs `yaYUL` when available, and converts `MAIN.agc.bin`
 - `shared/pinball_nouns.h`: first real PINBALL noun reference map
 - `esp8266_dsky_slave/esp8266_dsky_slave.ino`: ESP8266 DSKY slave, serial bridge, and web server
 - `esp8266_dsky_slave/web_dsky_page.h`: embedded browser DSKY page served by the ESP8266
 - `esp8266_dsky_slave/wifi_config.h.example`: optional local Wi-Fi config template
 - `mega_dsky_panel/mega_dsky_panel.ino`: Mega-side panel controller
 - `tests/agc_core_selftest.cpp`: desktop self-test for the core
+- `tests/agc_peripherals_selftest.cpp`: desktop self-test for keyrupt/downrupt/downlink behavior
+- `tests/mission_physics_selftest.cpp`: desktop self-test for mission telemetry helpers
 
 Each Arduino sketch folder also contains local copies of the headers it needs. This is intentional: the Arduino IDE compiles a sketch folder as a standalone unit, so includes like `../shared/dsky_protocol.h` may fail when the sketch is opened directly.
 
@@ -166,6 +173,8 @@ The ESP32 automatically prints:
 
 By default, the PC USB serial uses clean output only. The DSKY UART still receives raw `STATE,...` frames.
 
+The peripheral layer counts scheduled `KEYRUPT`/`DOWNRUPT` events and downlink changes by default. Use `PERIPH,IRQON` only when you want those scheduled peripheral events to request AGC core interrupts; the default keeps the bring-up loop stable while real interrupt handlers are still incomplete.
+
 Useful ESP32 USB commands:
 
 - `HELP`
@@ -173,6 +182,12 @@ Useful ESP32 USB commands:
 - `CORE`
 - `ROPE,INFO`
 - `ROPE,LOAD`
+- `PERIPH`
+- `PERIPH,RESET`
+- `PERIPH,IRQON`
+- `PERIPH,IRQOFF`
+- `DOWNLINK`
+- `UPKEY,<key-name-or-octal-word>`
 - `CHAN,<octal-channel>`
 - `CHAN,<octal-channel>,<octal-word>`
 - `IRQ,<0-7>`
@@ -328,7 +343,7 @@ STATE,0,16,36,+00012,+00034,+00056,1202,1,96,1234
 
 This is not yet:
 
-- a `yaYUL` build pipeline
+- a bundled `yaYUL` executable
 - a historically faithful Block II AGC CPU
 - a complete `PINBALL` implementation
 - high-fidelity IMU/CDU/radar/propulsion physics

@@ -1,30 +1,65 @@
 # Rope Image Build Path
 
-This project now has the first embedded rope-image hook for the ESP32 AGC core.
+This project has an embedded rope-image hook for the ESP32 AGC core and a local helper for the Virtual AGC source layout in this repository.
 
-It is not a full `yaYUL` automation yet, because the workspace does not contain a working local `yaYUL` executable in this environment. The path is ready for it:
+The local Apollo 11 source directories are already in yaYUL's expected shape:
 
-1. Assemble the AGC source with `yaYUL`.
-2. Export or save the assembled rope as octal text words or little-endian 16-bit binary words.
-3. Convert that rope dump into `embedded/esp32_agc_core/rope_image.h`.
-4. Flash `embedded/esp32_agc_core` to the ESP32.
-5. Use `ROPE,LOAD` on the ESP32 serial monitor.
+- `Comanche055/MAIN.agc` includes the Command Module source files.
+- `Luminary099/MAIN.agc` includes the Lunar Module source files.
+
+The workspace does not currently contain a working local `yaYUL` executable, so the helper validates the source tree, searches for `yaYUL`, and prints the exact next command when the assembler is missing.
+
+## One-command path
+
+From the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\build_rope_image.ps1 -Program Comanche055
+```
+
+For the Lunar Module rope:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\build_rope_image.ps1 -Program Luminary099
+```
+
+If `yaYUL.exe` is not on `PATH`, place or build it locally and pass the path explicitly:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\build_rope_image.ps1 -Program Comanche055 -YaYulPath .\yaYUL.exe
+```
+
+The helper copies the selected source tree to a temporary build directory before assembly, so `MAIN.agc.bin`, the symbol table, and the listing are not written into `Comanche055/` or `Luminary099/`. It also creates temporary include aliases from each file's `# Filename:` metadata; this handles the local `Luminary099` checkout where two filenames differ from the names included by `MAIN.agc`. When assembly succeeds, it converts yaYUL's `MAIN.agc.bin` into `embedded/esp32_agc_core/rope_image.h`.
+
+The equivalent raw yaYUL command, if you are assembling manually from a source directory, is:
+
+```powershell
+..\yaYUL\yaYUL MAIN.agc > Comanche055.lst
+```
+
+yaYUL writes `MAIN.agc.bin` next to `MAIN.agc`. That `.bin` file is big-endian, stores each 15-bit AGC word shifted left by one parity bit, and orders banks as `2,3,0,1,4...`. The converter's `--format yayul` mode normalizes that into the ESP32 core's bank order.
 
 ## Convert a rope dump
 
 From the repository root:
 
 ```powershell
-python embedded/tools/rope_to_header.py path\to\rope_dump.txt embedded\esp32_agc_core\rope_image.h --format text --name "Comanche055"
+py embedded\tools\rope_to_header.py path\to\rope_dump.txt embedded\esp32_agc_core\rope_image.h --format text --name "Comanche055"
 ```
 
-For binary 16-bit little-endian words:
+For yaYUL output:
 
 ```powershell
-python embedded/tools/rope_to_header.py path\to\rope_dump.bin embedded\esp32_agc_core\rope_image.h --format binary --name "Comanche055"
+py embedded\tools\rope_to_header.py Comanche055\MAIN.agc.bin embedded\esp32_agc_core\rope_image.h --format yayul --name "Comanche055"
 ```
 
-`--format auto` tries text first and falls back to binary if too few octal words are found.
+For raw binary 16-bit little-endian words:
+
+```powershell
+py embedded\tools\rope_to_header.py path\to\rope_dump.bin embedded\esp32_agc_core\rope_image.h --format binary --name "Comanche055"
+```
+
+`--format auto` treats `*.agc.bin` as yaYUL output. Other files are parsed as text first and fall back to raw little-endian binary if too few octal words are found.
 
 ## ESP32 commands
 

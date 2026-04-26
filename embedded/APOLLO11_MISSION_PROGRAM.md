@@ -166,15 +166,17 @@ O valor dela agora e permitir testar o DSKY e a arquitetura ESP32/ESP8266 em tod
 Implementado neste bloco:
 
 - caminho inicial para carregar imagens de rope geradas externamente pelo `yaYUL`
+- helper `embedded/tools/build_rope_image.ps1` para validar `Comanche055`/`Luminary099`, executar `yaYUL` quando disponivel e gerar `rope_image.h`
 - loader `ROPE,INFO` / `ROPE,LOAD` para o ESP32
-- infraestrutura de instrucoes estendidas, interrupts, canais I/O e registradores especiais basicos no core AGC
+- infraestrutura de instrucoes estendidas, `RELINT`, `INHINT`, `RESUME`, interrupts, canais I/O e registradores especiais basicos no core AGC
+- camada deterministica de perifericos para `KEYRUPT`, `DOWNRUPT`, uplink por teclado e fila de downlink
 - mapa inicial de nouns reais do `PINBALL` para consulta serial
-- modelo de telemetria de missao com IMU, radar e propulsao sinteticos
+- modelo de telemetria de missao com helpers fisicos leves para subida, costa, orbita, descida e reentrada
 - extensao `PHASE,...` do protocolo para o Web DSKY exibir fase e nomes dos registradores
 
 Ainda falta para ficar historicamente fiel:
 
-- montar e validar uma imagem real do Comanche/Luminary com `yaYUL`
-- completar a semantica exata de todos os opcodes Block II
-- implementar timing fiel de interrupts, downrupt, uplink/downlink e perifericos
-- substituir os modelos sinteticos por simuladores fisicos/orbitais mais rigorosos
+- ter um `yaYUL` executavel no ambiente e validar uma imagem real gerada de Comanche/Luminary no ESP32
+- completar a semantica exata de todos os opcodes Block II e modos de enderecamento
+- calibrar timing fiel de interrupts, downrupt, uplink/downlink e perifericos contra o comportamento do AGC/yaAGC
+- substituir os modelos fisicos leves por simuladores orbitais e de veiculo em alta fidelidade

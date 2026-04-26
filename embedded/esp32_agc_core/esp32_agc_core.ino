@@ -1,5 +1,7 @@
 #include "agc_core.h"
+#include "agc_peripherals.h"
 #include "dsky_protocol.h"
+#include "mission_physics.h"
 #include "pinball_nouns.h"
 #include "rope_image.h"
 
@@ -32,6 +34,7 @@ constexpr uint8_t kLaunchDefaultTimeScale = 20;
 
 HardwareSerial panelSerial(2);
 agc::Core agcCore;
+agc::Peripherals agcPeripherals;
 dsky::State state;
 dsky::Phase phase;
 
@@ -230,8 +233,28 @@ void formatAgcWord(char* buffer, size_t bufferSize, uint16_t word) {
   snprintf(buffer, bufferSize, "%c%05u", sign, magnitude);
 }
 
+uint16_t dskyKeyToPeripheralWord(dsky::Key key) {
+  return static_cast<uint16_t>(static_cast<uint8_t>(key)) &
+         agc::Core::kWordMask;
+}
+
 void setCoreDisplayRegister(uint16_t address, uint8_t value) {
   agcCore.writeErasable(address, agc::Core::fromInt(value));
+}
+
+bool isOctalText(const char* text) {
+  if (text == nullptr || *text == '\0') {
+    return false;
+  }
+
+  while (*text != '\0') {
+    if (*text < '0' || *text > '7') {
+      return false;
+    }
+    text++;
+  }
+
+  return true;
 }
 
 int clampInt(int value, int minimum, int maximum) {
@@ -336,113 +359,33 @@ void setPhaseText(const char* label, const char* r1Label,
 
 MissionTelemetry computeTelemetryModel(const MissionScenario& scenario) {
   MissionTelemetry telemetry = {};
-  telemetry.getMin = scenario.r1;
-  telemetry.altitudeKm = 0;
-  telemetry.altitudeM = 0;
-  telemetry.velocityMs = 0;
-  telemetry.distanceKkm = 0;
-  telemetry.rangeM = 0;
-  telemetry.rangeKm = 0;
-  telemetry.burnSec = 0;
-  telemetry.deltaVMps = 0;
-  telemetry.imuRollDeg = static_cast<int16_t>((scenario.noun * 7) % 360);
-  telemetry.imuPitchDeg = static_cast<int16_t>((scenario.noun * 3) % 180);
-  telemetry.imuYawDeg = static_cast<int16_t>((scenario.noun * 11) % 360);
-  telemetry.radarAltitudeM = 0;
-  telemetry.radarRangeM = 0;
-  telemetry.propellantPct = 100;
-  telemetry.status = scenario.r3;
-  telemetry.evaMin = 0;
-  telemetry.sampleKg = 0;
-  telemetry.mcc = 0;
+  const mission_physics::MissionState physics =
+      mission_physics::computeMissionState(scenario.noun, scenario.r1);
 
-  switch (scenario.noun) {
-    case 20:
-      telemetry.altitudeKm = 185;
-      telemetry.velocityMs = 7800;
-      telemetry.propellantPct = 92;
-      break;
-    case 21:
-      telemetry.burnSec = 348;
-      telemetry.deltaVMps = 3200;
-      telemetry.propellantPct = 72;
-      break;
-    case 22:
-      telemetry.rangeM = 30;
-      telemetry.status = 1;
-      telemetry.propellantPct = 71;
-      break;
-    case 23:
-      telemetry.distanceKkm = 120;
-      telemetry.mcc = 2;
-      telemetry.propellantPct = 70;
-      break;
-    case 24:
-      telemetry.burnSec = 357;
-      telemetry.deltaVMps = 900;
-      telemetry.propellantPct = 55;
-      break;
-    case 25:
-      telemetry.altitudeKm = 111;
-      telemetry.status = 1;
-      break;
-    case 26:
-      telemetry.altitudeKm = 15;
-      telemetry.velocityMs = 1680;
-      telemetry.radarAltitudeM = 15000;
-      telemetry.radarRangeM = 24000;
-      telemetry.propellantPct = 44;
-      break;
-    case 27:
-      telemetry.altitudeM = 150;
-      telemetry.velocityMs = 50;
-      telemetry.radarAltitudeM = 150;
-      telemetry.radarRangeM = 320;
-      telemetry.propellantPct = 18;
-      break;
-    case 28:
-      telemetry.altitudeM = 0;
-      telemetry.status = 1;
-      telemetry.radarAltitudeM = 0;
-      telemetry.propellantPct = 17;
-      break;
-    case 29:
-      telemetry.evaMin = 151;
-      telemetry.sampleKg = 22;
-      telemetry.status = 1;
-      break;
-    case 30:
-      telemetry.burnSec = 435;
-      telemetry.velocityMs = 1800;
-      telemetry.propellantPct = 53;
-      break;
-    case 31:
-      telemetry.rangeKm = 0;
-      telemetry.status = 1;
-      telemetry.radarRangeM = 0;
-      break;
-    case 32:
-      telemetry.burnSec = 151;
-      telemetry.deltaVMps = 1000;
-      telemetry.propellantPct = 41;
-      break;
-    case 33:
-      telemetry.distanceKkm = 250;
-      telemetry.mcc = 0;
-      break;
-    case 34:
-      telemetry.altitudeKm = 122;
-      telemetry.velocityMs = 11000;
-      telemetry.propellantPct = 0;
-      break;
-    case 35:
-      telemetry.altitudeKm = 0;
-      telemetry.status = 1;
-      break;
-    default:
-      telemetry.altitudeKm = scenario.r2;
-      telemetry.velocityMs = scenario.r3;
-      break;
+  telemetry.getMin = physics.getMin;
+  telemetry.altitudeKm = physics.altitudeKm;
+  telemetry.altitudeM = physics.altitudeM;
+  telemetry.velocityMs = physics.velocityMs;
+  telemetry.distanceKkm = physics.distanceKkm;
+  telemetry.rangeM = physics.rangeM;
+  telemetry.rangeKm = physics.rangeKm;
+  telemetry.burnSec = physics.burnSec;
+  telemetry.deltaVMps = physics.deltaVMps;
+  telemetry.imuRollDeg = physics.imuRollDeg;
+  telemetry.imuPitchDeg = physics.imuPitchDeg;
+  telemetry.imuYawDeg = physics.imuYawDeg;
+  telemetry.radarAltitudeM = physics.radarAltitudeM;
+  telemetry.radarRangeM = physics.radarRangeM;
+  telemetry.propellantPct = physics.propellantPct;
+  telemetry.status = physics.status;
+  telemetry.evaMin = physics.evaMin;
+  telemetry.sampleKg = physics.sampleKg;
+  telemetry.mcc = physics.mcc;
+
+  if (!mission_physics::isModeledMissionNoun(scenario.noun)) {
+    telemetry.status = scenario.r3;
+    telemetry.altitudeKm = scenario.r2;
+    telemetry.velocityMs = scenario.r3;
   }
 
   return telemetry;
@@ -514,6 +457,19 @@ int16_t telemetryValueForLabel(const MissionTelemetry& telemetry,
   return fallback;
 }
 
+bool peripheralUplinkActive() {
+  if (agcPeripherals.keyQueueDepth() > 0) {
+    return true;
+  }
+
+  if (agcPeripherals.keyruptCount() == 0) {
+    return false;
+  }
+
+  const uint32_t age = agcCore.cycles() - agcPeripherals.lastKeyCycle();
+  return age <= agcPeripherals.config().keyPeriodCycles * 4UL;
+}
+
 void syncLamps() {
   state.lampMask = manualLampMask | launchLampMask | missionScenarioLampMask;
   dsky::setLamp(&state, dsky::kLampProg, entryMode != EntryMode::Idle);
@@ -521,6 +477,9 @@ void syncLamps() {
                 agcCore.readErasable(agc::Core::kPanelAlarm) != 0 ||
                     agcCore.runState() == agc::Core::RunState::Faulted);
   dsky::setLamp(&state, dsky::kLampKeyRel, state.flashVerbNoun);
+  if (peripheralUplinkActive()) {
+    dsky::setLamp(&state, dsky::kLampUplinkActy, true);
+  }
   dsky::setLamp(&state, dsky::kLampCompActy, millis() < compActyUntilMs);
   dsky::setLamp(&state, dsky::kLampNoAtt,
                 agcCore.runState() == agc::Core::RunState::Halted);
@@ -603,21 +562,6 @@ void raiseAlarm(uint16_t alarmCode) {
   refreshDskyFromCore();
 }
 
-int32_t lerpInt(int32_t startValue, int32_t endValue, int16_t second,
-                int16_t startSecond, int16_t endSecond) {
-  if (second <= startSecond) {
-    return startValue;
-  }
-
-  if (second >= endSecond || endSecond == startSecond) {
-    return endValue;
-  }
-
-  return startValue +
-         ((endValue - startValue) * (second - startSecond)) /
-             (endSecond - startSecond);
-}
-
 int8_t launchEventIndexForSecond(int16_t second) {
   int8_t index = -1;
   for (uint8_t i = 0; i < sizeof(kLaunchEvents) / sizeof(kLaunchEvents[0]);
@@ -663,58 +607,15 @@ void computeLaunchTelemetry(int16_t second) {
     return;
   }
 
+  const mission_physics::AscentState ascent =
+      mission_physics::computeAscentState(second);
+  launchAltitudeKm = ascent.altitudeKm;
+  launchVelocityMs = ascent.velocityMs;
   launchLampMask = dsky::kLampProg | dsky::kLampTracker;
 
   if (second < kLaunchOrbitInsertionSecond) {
     launchLampMask |= dsky::kLampUplinkActy;
   }
-
-  if (second <= 83) {
-    launchAltitudeKm =
-        static_cast<int16_t>(lerpInt(0, 14, second, 0, 83));
-    launchVelocityMs =
-        static_cast<int16_t>(lerpInt(0, 520, second, 0, 83));
-    return;
-  }
-
-  if (second <= 164) {
-    launchAltitudeKm =
-        static_cast<int16_t>(lerpInt(14, 65, second, 83, 164));
-    launchVelocityMs =
-        static_cast<int16_t>(lerpInt(520, 2700, second, 83, 164));
-    return;
-  }
-
-  if (second <= 197) {
-    launchAltitudeKm =
-        static_cast<int16_t>(lerpInt(65, 95, second, 164, 197));
-    launchVelocityMs =
-        static_cast<int16_t>(lerpInt(2700, 3200, second, 164, 197));
-    return;
-  }
-
-  if (second <= 462) {
-    launchAltitudeKm =
-        static_cast<int16_t>(lerpInt(95, 176, second, 197, 462));
-    launchVelocityMs =
-        static_cast<int16_t>(lerpInt(3200, 5291, second, 197, 462));
-    return;
-  }
-
-  if (second <= 555) {
-    launchAltitudeKm =
-        static_cast<int16_t>(lerpInt(176, 187, second, 462, 555));
-    launchVelocityMs =
-        static_cast<int16_t>(lerpInt(5291, 7049, second, 462, 555));
-    return;
-  }
-
-  launchAltitudeKm =
-      static_cast<int16_t>(lerpInt(187, 185, second, 555,
-                                  kLaunchOrbitInsertionSecond));
-  launchVelocityMs =
-      static_cast<int16_t>(lerpInt(7049, 7800, second, 555,
-                                  kLaunchOrbitInsertionSecond));
 }
 
 void configureLaunchDisplay() {
@@ -1098,8 +999,19 @@ void writeLastKey(dsky::Key key) {
                         agc::Core::fromInt(static_cast<int16_t>(key)));
 }
 
+bool queueDskyKeyForCore(dsky::Key key) {
+  if (key == dsky::Key::None) {
+    return false;
+  }
+
+  return agcPeripherals.enqueueKey(dskyKeyToPeripheralWord(key));
+}
+
 void handleKey(dsky::Key key) {
   writeLastKey(key);
+  if (!queueDskyKeyForCore(key)) {
+    Serial.println(F("UPKEY queue full; key not queued to AGC channel."));
+  }
 
   switch (key) {
     case dsky::Key::Digit0:
@@ -1218,7 +1130,74 @@ void emitCoreStatus(Stream& port) {
   port.print(F(" IRQ="));
   port.print(agcCore.pendingInterruptMask(), BIN);
   port.print(F(" CH10="));
-  port.println(agcCore.readChannel(agc::Core::kChannelDSKY), OCT);
+  port.print(agcCore.readChannel(agc::Core::kChannelDSKY), OCT);
+  port.print(F(" CH11="));
+  port.print(agcCore.readChannel(agc::Peripherals::kChannelDownlink1), OCT);
+  port.print(F(" CH12="));
+  port.print(agcCore.readChannel(agc::Peripherals::kChannelDownlink2), OCT);
+  port.print(F(" CH13="));
+  port.print(agcCore.readChannel(agc::Peripherals::kChannelDownlink3), OCT);
+  port.print(F(" KEYCH="));
+  port.println(agcCore.readChannel(agc::Peripherals::kChannelKeyInput), OCT);
+}
+
+void emitPeripheralStatus(Stream& port) {
+  port.print(F("PERIPH CYC="));
+  port.print(agcPeripherals.lastCycle());
+  port.print(F(" CHG="));
+  port.print(agcPeripherals.channelChangeCount());
+  port.print(F(" DLQ="));
+  port.print(static_cast<unsigned int>(agcPeripherals.downlinkQueueDepth()));
+  port.print(F(" DLSEQ="));
+  port.print(agcPeripherals.nextDownlinkSequence());
+  port.print(F(" DLDROP="));
+  port.print(agcPeripherals.downlinkDropped());
+  port.print(F(" LASTDL="));
+  port.print(agcPeripherals.lastDownlinkCycle());
+  port.print(F(":CH"));
+  port.print(static_cast<unsigned int>(agcPeripherals.lastDownlinkChannel()),
+             OCT);
+  port.print('=');
+  port.print(agcPeripherals.lastDownlinkWord(), OCT);
+  port.print(F(" DNRUPT="));
+  port.print(agcPeripherals.downruptCount());
+  port.print('@');
+  port.print(agcPeripherals.lastDownruptCycle());
+  port.print(F(" KEYQ="));
+  port.print(static_cast<unsigned int>(agcPeripherals.keyQueueDepth()));
+  port.print(F(" KEYDROP="));
+  port.print(agcPeripherals.keyDropped());
+  port.print(F(" KEYRUPT="));
+  port.print(agcPeripherals.keyruptCount());
+  port.print('@');
+  port.print(agcPeripherals.lastKeyCycle());
+  port.print(F(" IRQREQ="));
+  port.print(agcPeripherals.config().requestScheduledInterrupts ? 1 : 0);
+  port.print(F(" LASTKEY="));
+  port.print(agcPeripherals.lastKeyWord(), OCT);
+  port.print(F(" IRQ="));
+  port.println(agcCore.pendingInterruptMask(), BIN);
+}
+
+void emitDownlinkWords(Stream& port) {
+  if (agcPeripherals.downlinkQueueDepth() == 0) {
+    port.println(F("DOWNLINK empty"));
+    return;
+  }
+
+  agc::Peripherals::DownlinkWord word;
+  while (agcPeripherals.popDownlink(&word)) {
+    port.print(F("DOWNLINK #"));
+    port.print(word.sequence);
+    port.print(F(" CYC="));
+    port.print(word.cycle);
+    port.print(F(" CH"));
+    port.print(static_cast<unsigned int>(word.channel), OCT);
+    port.print('=');
+    port.print(word.word, OCT);
+    port.print(F(" "));
+    port.println(agc::Peripherals::downlinkReasonName(word.reason));
+  }
 }
 
 const __FlashStringHelper* runStateText() {
@@ -1290,6 +1269,14 @@ void emitCleanStatus(Stream& port) {
   port.print(agcCore.getA(), OCT);
   port.print(F(" | CYC "));
   port.print(agcCore.cycles());
+  port.print(F(" | IO DLQ "));
+  port.print(static_cast<unsigned int>(agcPeripherals.downlinkQueueDepth()));
+  port.print(F(" KEYQ "));
+  port.print(static_cast<unsigned int>(agcPeripherals.keyQueueDepth()));
+  port.print(F(" DNR "));
+  port.print(agcPeripherals.downruptCount());
+  port.print(F(" KEYR "));
+  port.print(agcPeripherals.keyruptCount());
   port.print(F(" | "));
   port.print(runStateText());
   if (launchMode != LaunchMode::Off) {
@@ -1368,11 +1355,37 @@ void setUsbOutputMode(UsbOutputMode mode) {
   }
 }
 
+void queuePeripheralKeyCommand(const char* text) {
+  dsky::Key key = dsky::parseKeyName(text);
+  uint16_t word = 0;
+
+  if (key != dsky::Key::None) {
+    word = dskyKeyToPeripheralWord(key);
+  } else if (isOctalText(text)) {
+    word = parseOctal(text);
+  } else {
+    Serial.println(F("UPKEY expects a DSKY key name or octal word."));
+    return;
+  }
+
+  if (!agcPeripherals.enqueueKey(word)) {
+    Serial.println(F("UPKEY queue full."));
+    return;
+  }
+
+  Serial.print(F("UPKEY queued word="));
+  Serial.print(word, OCT);
+  Serial.print(F(" depth="));
+  Serial.println(static_cast<unsigned int>(agcPeripherals.keyQueueDepth()));
+}
+
 void handleConsoleCommand(char* line) {
   if (strcmp(line, "HELP") == 0) {
     Serial.println(F("Commands:"));
     Serial.println(F("  KEY,<name>"));
     Serial.println(F("  RUN HALT STEP RESET STATE CORE"));
+    Serial.println(F("  PERIPH PERIPH,RESET PERIPH,IRQON PERIPH,IRQOFF"));
+    Serial.println(F("  DOWNLINK UPKEY,<name|octal>"));
     Serial.println(F("  ROPE,INFO ROPE,LOAD"));
     Serial.println(F("  CHAN,<octal> CHAN,<octal>,<octal> IRQ,<0-7>"));
     Serial.println(F("  PINBALL,<noun> PINBALL,LIST"));
@@ -1403,8 +1416,10 @@ void handleConsoleCommand(char* line) {
 
   if (strcmp(line, "STEP") == 0) {
     agcCore.step();
+    agcPeripherals.tick(agcCore);
     refreshDskyFromCore();
     emitCoreStatus(Serial);
+    emitPeripheralStatus(Serial);
     return;
   }
 
@@ -1413,6 +1428,7 @@ void handleConsoleCommand(char* line) {
     clearLaunchState();
     agcCore.reset();
     agcCore.start();
+    agcPeripherals.reset(agcCore);
     state.flashVerbNoun = false;
     manualLampMask = 0;
     entryMode = EntryMode::Idle;
@@ -1432,6 +1448,36 @@ void handleConsoleCommand(char* line) {
 
   if (strcmp(line, "CORE") == 0) {
     emitCoreStatus(Serial);
+    emitPeripheralStatus(Serial);
+    return;
+  }
+
+  if (strcmp(line, "PERIPH") == 0) {
+    emitPeripheralStatus(Serial);
+    return;
+  }
+
+  if (strcmp(line, "PERIPH,RESET") == 0) {
+    agcPeripherals.reset(agcCore);
+    emitPeripheralStatus(Serial);
+    return;
+  }
+
+  if (strcmp(line, "PERIPH,IRQON") == 0 ||
+      strcmp(line, "PERIPH,IRQOFF") == 0) {
+    agcPeripherals.setRequestScheduledInterrupts(
+        strcmp(line, "PERIPH,IRQON") == 0);
+    emitPeripheralStatus(Serial);
+    return;
+  }
+
+  if (strcmp(line, "DOWNLINK") == 0) {
+    emitDownlinkWords(Serial);
+    return;
+  }
+
+  if (strncmp(line, "UPKEY,", 6) == 0) {
+    queuePeripheralKeyCommand(line + 6);
     return;
   }
 
@@ -1489,6 +1535,7 @@ void handleConsoleCommand(char* line) {
 
     if (agcCore.loadRopeImage(embedded_rope::kImage)) {
       agcCore.start();
+      agcPeripherals.reset(agcCore);
       clearMissionScenario();
       clearLaunchState();
       refreshDskyFromCore();
@@ -1506,12 +1553,12 @@ void handleConsoleCommand(char* line) {
     if (valueText != nullptr) {
       *valueText = '\0';
       valueText++;
-      agcCore.writeChannel(channel, parseOctal(valueText));
+      agcPeripherals.writeChannel(agcCore, channel, parseOctal(valueText));
     }
     Serial.print(F("CHAN,"));
     Serial.print(channel, OCT);
     Serial.print(F(","));
-    Serial.println(agcCore.readChannel(channel), OCT);
+    Serial.println(agcPeripherals.readChannel(agcCore, channel), OCT);
     return;
   }
 
@@ -1733,6 +1780,7 @@ void setup() {
 
   agcCore.reset();
   agcCore.start();
+  agcPeripherals.reset(agcCore);
   calibrateJoystick();
   dsky::initState(&state);
   dsky::initPhase(&phase);
@@ -1755,8 +1803,14 @@ void loop() {
     sampleJoystick();
   }
 
+  bool coreAdvanced = false;
   if (agcCore.runState() == agc::Core::RunState::Running) {
     agcCore.runFor(kInstructionsPerLoop);
+    coreAdvanced = true;
+  }
+
+  const bool peripheralChanged = agcPeripherals.tick(agcCore);
+  if (coreAdvanced || peripheralChanged) {
     refreshDskyFromCore();
   }
 
