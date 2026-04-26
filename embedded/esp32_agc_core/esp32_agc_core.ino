@@ -79,6 +79,11 @@ enum class MissionProcedureMode : uint8_t {
   Complete,
 };
 
+enum class MissionProcedureClockMode : uint8_t {
+  Compressed = 0,
+  MissionElapsedTime,
+};
+
 struct LaunchEvent {
   int16_t second;
   const char* label;
@@ -439,6 +444,8 @@ uint8_t missionProcedureStepIndex = 0;
 bool missionProcedureAutoChain = false;
 uint8_t missionProcedureStartNoun = 0;
 uint8_t missionProcedureTimeScale = kMissionDefaultTimeScale;
+MissionProcedureClockMode missionProcedureClockMode =
+    MissionProcedureClockMode::Compressed;
 unsigned long missionProcedureStepStartMs = 0;
 unsigned long lastMissionProcedureMonitorMs = 0;
 
@@ -625,6 +632,49 @@ void clearMissionScenario() {
   missionScenarioLampMask = 0;
 }
 
+bool missionProcedureNextStepBelongsToRun(
+    uint8_t nextIndex,
+    const MissionProcedureStep& current) {
+  if (nextIndex >=
+      sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0])) {
+    return false;
+  }
+
+  const MissionProcedureStep& next = kMissionProcedureSteps[nextIndex];
+  return missionProcedureAutoChain ? (next.noun >= 20 && next.noun <= 35)
+                                   : (next.noun == current.noun);
+}
+
+uint32_t missionProcedureStepDurationSeconds(uint8_t stepIndex) {
+  if (stepIndex >=
+      sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0])) {
+    return 0;
+  }
+
+  const MissionProcedureStep& step = kMissionProcedureSteps[stepIndex];
+  if (missionProcedureClockMode ==
+      MissionProcedureClockMode::MissionElapsedTime) {
+    const uint8_t nextIndex = static_cast<uint8_t>(stepIndex + 1);
+    if (missionProcedureNextStepBelongsToRun(nextIndex, step)) {
+      const int32_t deltaMin =
+          static_cast<int32_t>(kMissionProcedureSteps[nextIndex].getMin) -
+          step.getMin;
+      if (deltaMin > 0) {
+        return static_cast<uint32_t>(deltaMin) * 60UL;
+      }
+    }
+  }
+
+  return step.durationSec == 0 ? 1 : step.durationSec;
+}
+
+void printMissionProcedureClockMode(Stream& port) {
+  port.print(missionProcedureClockMode ==
+                     MissionProcedureClockMode::MissionElapsedTime
+                 ? F("REALTIME")
+                 : F("COMPRESSED"));
+}
+
 void setPhaseText(const char* label, const char* r1Label,
                   const char* r2Label, const char* r3Label) {
   dsky::copyField(phase.label, sizeof(phase.label), label);
@@ -655,23 +705,20 @@ int16_t currentMissionProcedureGetMin() {
   const uint8_t nextIndex = static_cast<uint8_t>(missionProcedureStepIndex + 1);
   if (missionProcedureMode == MissionProcedureMode::Running &&
       nextIndex < sizeof(kMissionProcedureSteps) / sizeof(kMissionProcedureSteps[0])) {
-    const MissionProcedureStep& next = kMissionProcedureSteps[nextIndex];
-    const bool nextBelongsToRun =
-        missionProcedureAutoChain
-            ? (next.noun >= 20 && next.noun <= 35)
-            : (next.noun == step->noun);
-    if (nextBelongsToRun) {
-      endGetMin = next.getMin;
+    if (missionProcedureNextStepBelongsToRun(nextIndex, *step)) {
+      endGetMin = kMissionProcedureSteps[nextIndex].getMin;
     }
   }
 
-  if (endGetMin <= step->getMin || step->durationSec == 0) {
+  const uint32_t stepDurationSec =
+      missionProcedureStepDurationSeconds(missionProcedureStepIndex);
+  if (endGetMin <= step->getMin || stepDurationSec == 0) {
     return step->getMin;
   }
 
   const int32_t t = mission_physics::progressPermille(
       static_cast<int32_t>(currentMissionStepElapsedSeconds()), 0,
-      step->durationSec);
+      static_cast<int32_t>(stepDurationSec));
   return static_cast<int16_t>(
       mission_physics::lerpPermille(step->getMin, endGetMin, t));
 }
@@ -1142,9 +1189,11 @@ void emitMissionStatus(Stream& port) {
     port.print(F(" | ELAPSED "));
     port.print(currentMissionStepElapsedSeconds());
     port.print('/');
-    port.print(step->durationSec);
+    port.print(missionProcedureStepDurationSeconds(missionProcedureStepIndex));
     port.print(F(" | x"));
     port.print(missionProcedureTimeScale);
+    port.print(F(" CLK "));
+    printMissionProcedureClockMode(port);
     if (missionProcedureMode == MissionProcedureMode::Complete) {
       port.print(F(" COMPLETE"));
     }
@@ -1203,10 +1252,12 @@ void emitMissionStatus(Stream& port) {
 void printMissionCommandList(Stream& port) {
   port.println(F("Apollo 11 mission commands:"));
   port.println(F("  V37 N00 ENTR  STOP / P00"));
-  port.println(F("  V37 N11 ENTR  FULL MISSION FROM LAUNCH x20"));
-  port.println(F("  V37 N12 ENTR  FULL MISSION FROM LAUNCH x1"));
+  port.println(F("  V37 N11 ENTR  FULL MISSION COMPRESSED DEMO"));
+  port.println(F("  V37 N12 ENTR  FULL MISSION REALTIME GET x1"));
+  port.println(F("  APOLLO11,FULL,REALTIME starts wall-clock mission"));
   port.println(F("  MISSION,SPEED,<1-100> adjusts automated steps"));
-  port.println(F("  MISSION,REALTIME sets automated steps to x1"));
+  port.println(F("  MISSION,REALTIME uses GET timing at x1"));
+  port.println(F("  MISSION,DEMO returns to compressed step timing"));
 
   for (uint8_t i = 0;
        i < sizeof(kMissionScenarios) / sizeof(kMissionScenarios[0]); ++i) {
@@ -1248,12 +1299,7 @@ bool missionProcedureCanAdvanceTo(uint8_t nextIndex) {
     return false;
   }
 
-  if (missionProcedureAutoChain) {
-    return kMissionProcedureSteps[nextIndex].noun >= 20 &&
-           kMissionProcedureSteps[nextIndex].noun <= 35;
-  }
-
-  return kMissionProcedureSteps[nextIndex].noun == current->noun;
+  return missionProcedureNextStepBelongsToRun(nextIndex, *current);
 }
 
 void completeMissionProcedure() {
@@ -1332,8 +1378,10 @@ void updateMissionProcedure() {
   const bool monitorDue =
       lastMissionProcedureMonitorMs == 0 ||
       now - lastMissionProcedureMonitorMs >= kMissionStepMonitorMs;
+  const uint32_t stepDurationSec =
+      missionProcedureStepDurationSeconds(missionProcedureStepIndex);
 
-  if (currentMissionStepElapsedSeconds() >= step->durationSec) {
+  if (currentMissionStepElapsedSeconds() >= stepDurationSec) {
     advanceMissionProcedureStep();
     return;
   }
@@ -1471,6 +1519,13 @@ void updateLaunchSimulation() {
   }
 }
 
+void setMissionProcedureClockMode(MissionProcedureClockMode mode) {
+  missionProcedureClockMode = mode;
+  Serial.print(F("Mission procedure clock "));
+  printMissionProcedureClockMode(Serial);
+  Serial.println();
+}
+
 void setMissionProcedureTimeScale(uint8_t scale) {
   if (scale == 0) {
     scale = 1;
@@ -1491,7 +1546,19 @@ void setMissionProcedureTimeScale(uint8_t scale) {
   }
 
   Serial.print(F("Mission procedure speed x"));
-  Serial.println(missionProcedureTimeScale);
+  Serial.print(missionProcedureTimeScale);
+  Serial.print(F(" CLK "));
+  printMissionProcedureClockMode(Serial);
+  Serial.println();
+}
+
+void startFullApollo11Mission(uint8_t launchScale,
+                              uint8_t procedureScale,
+                              MissionProcedureClockMode clockMode) {
+  setMissionProcedureClockMode(clockMode);
+  setMissionProcedureTimeScale(procedureScale);
+  setLaunchTimeScale(launchScale);
+  startLaunchSimulation();
 }
 
 void executeApollo11MissionNoun(uint8_t noun) {
@@ -1501,14 +1568,15 @@ void executeApollo11MissionNoun(uint8_t noun) {
   }
 
   if (noun == 11) {
-    setLaunchTimeScale(kLaunchDefaultTimeScale);
-    startLaunchSimulation();
+    startFullApollo11Mission(kLaunchDefaultTimeScale,
+                             kMissionDefaultTimeScale,
+                             MissionProcedureClockMode::Compressed);
     return;
   }
 
   if (noun == 12) {
-    setLaunchTimeScale(1);
-    startLaunchSimulation();
+    startFullApollo11Mission(1, 1,
+                             MissionProcedureClockMode::MissionElapsedTime);
     return;
   }
 
@@ -1979,6 +2047,8 @@ void emitCleanStatus(Stream& port) {
     port.print(telemetryValueForLabel(telemetry, step->r3Label, step->r3));
     port.print(F(" | x"));
     port.print(missionProcedureTimeScale);
+    port.print(F(" CLK "));
+    printMissionProcedureClockMode(port);
     if (missionProcedureMode == MissionProcedureMode::Complete) {
       port.print(F(" COMPLETE"));
     }
@@ -2097,8 +2167,9 @@ void handleConsoleCommand(char* line) {
     Serial.println(F("  JOY JOYCAL"));
     Serial.println(F("  STATUS"));
     Serial.println(F("  APOLLO11,LIST APOLLO11,STATUS APOLLO11,STOP"));
-    Serial.println(F("  APOLLO11,FULL APOLLO11,<noun> or MISSION,<noun>"));
-    Serial.println(F("  MISSION,SPEED,<1-100> MISSION,REALTIME"));
+    Serial.println(F("  APOLLO11,FULL APOLLO11,FULL,REALTIME"));
+    Serial.println(F("  APOLLO11,<noun> or MISSION,<noun>"));
+    Serial.println(F("  MISSION,SPEED,<1-100> MISSION,REALTIME MISSION,DEMO"));
     Serial.println(F("  LAUNCH LAUNCH,STOP LAUNCH,STATUS"));
     Serial.println(F("  LAUNCH,SPEED,<1-100> LAUNCH,REALTIME"));
     Serial.println(F("  USB,CLEAN USB,RAW USB,BOTH USB,QUIET"));
@@ -2354,16 +2425,37 @@ void handleConsoleCommand(char* line) {
     return;
   }
 
-  if (strcmp(line, "APOLLO11,FULL") == 0 ||
-      strcmp(line, "MISSION,FULL") == 0) {
-    setLaunchTimeScale(kLaunchDefaultTimeScale);
-    startLaunchSimulation();
+  if (strcmp(line, "APOLLO11,FULL,REALTIME") == 0 ||
+      strcmp(line, "MISSION,FULL,REALTIME") == 0) {
+    startFullApollo11Mission(1, 1,
+                             MissionProcedureClockMode::MissionElapsedTime);
     return;
   }
 
-  if (strcmp(line, "APOLLO11,REALTIME") == 0 ||
-      strcmp(line, "MISSION,REALTIME") == 0) {
+  if (strcmp(line, "APOLLO11,FULL") == 0 ||
+      strcmp(line, "MISSION,FULL") == 0) {
+    startFullApollo11Mission(kLaunchDefaultTimeScale,
+                             kMissionDefaultTimeScale,
+                             MissionProcedureClockMode::Compressed);
+    return;
+  }
+
+  if (strcmp(line, "APOLLO11,REALTIME") == 0) {
+    setLaunchTimeScale(1);
+    setMissionProcedureClockMode(MissionProcedureClockMode::MissionElapsedTime);
     setMissionProcedureTimeScale(1);
+    return;
+  }
+
+  if (strcmp(line, "MISSION,REALTIME") == 0) {
+    setMissionProcedureClockMode(MissionProcedureClockMode::MissionElapsedTime);
+    setMissionProcedureTimeScale(1);
+    return;
+  }
+
+  if (strcmp(line, "MISSION,DEMO") == 0 ||
+      strcmp(line, "APOLLO11,DEMO") == 0) {
+    setMissionProcedureClockMode(MissionProcedureClockMode::Compressed);
     return;
   }
 

@@ -159,8 +159,10 @@ LAUNCH,STATUS
 LAUNCH,SPEED,20
 LAUNCH,REALTIME
 APOLLO11,FULL
+APOLLO11,FULL,REALTIME
 MISSION,SPEED,10
 MISSION,REALTIME
+MISSION,DEMO
 ```
 
 Meaning:
@@ -171,8 +173,10 @@ Meaning:
 - `LAUNCH,SPEED,20`: sets the time scale from `1` to `100`
 - `LAUNCH,REALTIME`: sets the time scale to `x1`
 - `APOLLO11,FULL`: starts the complete launch-to-recovery sequence
+- `APOLLO11,FULL,REALTIME`: starts launch-to-recovery at wall-clock GET timing
 - `MISSION,SPEED,10`: sets the automated post-ascent procedure speed
-- `MISSION,REALTIME`: sets automated post-ascent procedure steps to `x1`
+- `MISSION,REALTIME`: uses real mission GET timing at `x1`
+- `MISSION,DEMO`: returns the automatic sequencer to compressed step timing
 
 ## Expected ESP32 Serial Output
 
@@ -188,8 +192,15 @@ Major events also appear as `LAUNCH` lines:
 LAUNCH T+00:00 LIFTOFF | P11 V16 N62 | R1 T+0 R2 ALT_KM 0 R3 VEL_MS 0 | x20
 LAUNCH T+01:23 MAX-Q | P11 V16 N62 | R1 T+83 R2 ALT_KM 14 R3 VEL_MS 520 | x20
 LAUNCH T+11:45 PARKING ORBIT | P11 V16 N62 | R1 T+705 R2 ALT_KM 185 R3 VEL_MS 7800 | x20 COMPLETE
-APOLLO11 AUTO N20 STEP 1/66 P11 V16 ORBIT INSERTION CHECK | GET_MIN 12 | ALT_KM 185 | VEL_MS 7800 | ALM 0000 | ELAPSED 0/12 | x10
+APOLLO11 AUTO N20 STEP 1/66 P11 V16 ORBIT INSERTION CHECK | GET_MIN 12 | ALT_KM 185 | VEL_MS 7800 | ALM 0000 | ELAPSED 0/12 | x10 CLK COMPRESSED
 ```
+
+For a real-time mission run, use `APOLLO11,FULL,REALTIME` or `V37 N12 ENTR`.
+After parking orbit, the automatic procedure duration is computed from the
+actual GET-minute gap to the next procedure step. That means the full simulated
+mission is expected to remain running for roughly the real Apollo 11 mission
+duration, about 8 days, 4 hours, and 30 minutes in the current timeline,
+instead of finishing as a short bench demo.
 
 ## Simulated Timeline
 

@@ -39,6 +39,7 @@ APOLLO11,LIST
 APOLLO11,STATUS
 APOLLO11,STOP
 APOLLO11,FULL
+APOLLO11,FULL,REALTIME
 APOLLO11,28
 MISSION,28
 ```
@@ -50,8 +51,16 @@ The automated procedure speed can be adjusted without restarting:
 ```text
 MISSION,SPEED,10
 MISSION,REALTIME
+MISSION,DEMO
 APOLLO11,SPEED,20
 ```
+
+`MISSION,REALTIME` switches the automatic sequencer to mission-elapsed-time
+GET timing at `x1`. In that mode, gaps between procedure steps follow the
+Apollo 11 GET minute values, so a full `N12` or `APOLLO11,FULL,REALTIME` run is
+intended to take roughly the same wall-clock duration as the real mission:
+about 8 days, 4 hours, and 30 minutes in the current timeline.
+`MISSION,DEMO` returns to the short compressed step timing used for bench demos.
 
 ## DSKY Readout
 
@@ -77,8 +86,8 @@ After parking orbit insertion, `N11` and `N12` automatically continue into the m
 | Command | Situation | Expected display | R1 | R2 | R3 |
 | --- | --- | --- | --- | --- | --- |
 | `V37 N00 ENTR` | Stop mission program | `P00 V16 N36` | AGC counter | A | Z |
-| `V37 N11 ENTR` | Full mission from launch, accelerated `x20` | `P11 V16 N62`, then auto sequence | `T+ sec` | `ALT_KM` | `VEL_MS` |
-| `V37 N12 ENTR` | Full mission from launch, real time `x1` | `P11 V16 N62`, then auto sequence | `T+ sec` | `ALT_KM` | `VEL_MS` |
+| `V37 N11 ENTR` | Full mission from launch, compressed demo timing | `P11 V16 N62`, then auto sequence | `T+ sec` | `ALT_KM` | `VEL_MS` |
+| `V37 N12 ENTR` | Full mission from launch, wall-clock GET timing `x1` | `P11 V16 N62`, then auto sequence | `T+ sec` | `ALT_KM` | `VEL_MS` |
 | `V37 N20 ENTR` | Auto mission from Earth parking orbit | `P11 V16 N20` | `GET_MIN` | `ALT_KM` | `VEL_MS` |
 | `V37 N21 ENTR` | Auto mission from translunar injection | `P15 V16 N21` | `GET_MIN` | `BURN_SEC` | `DV_MPS` |
 | `V37 N22 ENTR` | CSM/LM transposition and docking | `P17 V16 N22` | `GET_MIN` | `RANGE_M` | `DOCKED` |
@@ -116,7 +125,7 @@ APOLLO11 N28 P68 V16 LANDED SURFACE | GET_MIN 6155 | ALT_M 0 | LANDED 1 | ALM 00
 Selecting an automated procedure:
 
 ```text
-APOLLO11 AUTO N21 STEP 1/62 P15 V16 P15 TLI ENABLE | GET_MIN 164 | BURN_SEC 348 | DV_MPS 3200 | ALM 0000 | ELAPSED 0/10 | x10
+APOLLO11 AUTO N21 STEP 1/62 P15 V16 P15 TLI ENABLE | GET_MIN 164 | BURN_SEC 348 | DV_MPS 3200 | ALM 0000 | ELAPSED 0/10 | x10 CLK COMPRESSED
 ```
 
 The clean ESP32 status line also includes the `MSN` block:
@@ -143,6 +152,18 @@ Full mission path:
 
 ```text
 V37 N11 ENTR
+```
+
+Full mission path in wall-clock mission time:
+
+```text
+V37 N12 ENTR
+```
+
+Equivalent ESP32 serial command:
+
+```text
+APOLLO11,FULL,REALTIME
 ```
 
 Phase jump tests:

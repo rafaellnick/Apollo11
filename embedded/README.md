@@ -167,13 +167,19 @@ Start it in real time instead of accelerated time:
 VERB 37 NOUN 12 ENTR
 ```
 
+Equivalent ESP32 serial command:
+
+```text
+APOLLO11,FULL,REALTIME
+```
+
 During the launch simulation the display changes to `P11 V16 N62`:
 
 - `R1`: mission time in seconds, negative during the final countdown
 - `R2`: approximate altitude in kilometers
 - `R3`: approximate velocity in meters per second
 
-The default launch simulation speed is `x20`, so the 11 minute 45 second ascent to parking orbit runs in about 36 seconds. Use the ESP32 USB serial command `LAUNCH,SPEED,<1-100>` to change that speed. The post-ascent procedure sequencer defaults to `x10`; use `MISSION,SPEED,<1-100>` or `MISSION,REALTIME` to adjust it.
+The default launch simulation speed is `x20`, so the 11 minute 45 second ascent to parking orbit runs in about 36 seconds. Use the ESP32 USB serial command `LAUNCH,SPEED,<1-100>` to change that speed. The post-ascent procedure sequencer defaults to compressed demo timing at `x10`; use `MISSION,SPEED,<1-100>` for accelerated monitoring, or `MISSION,REALTIME` for GET-based wall-clock timing. A full `N12` / `APOLLO11,FULL,REALTIME` run is intentionally long and should remain active for about 8 days, 4 hours, and 30 minutes in the current timeline.
 
 ## PC Monitoring
 
@@ -228,8 +234,10 @@ Useful ESP32 USB commands:
 - `LAUNCH,SPEED,<1-100>`
 - `LAUNCH,REALTIME`
 - `APOLLO11,FULL`
+- `APOLLO11,FULL,REALTIME`
 - `MISSION,SPEED,<1-100>`
 - `MISSION,REALTIME`
+- `MISSION,DEMO`
 - `USB,CLEAN`
 - `USB,RAW`
 - `USB,BOTH`
