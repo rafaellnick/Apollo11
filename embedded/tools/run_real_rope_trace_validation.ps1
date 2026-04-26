@@ -10,6 +10,7 @@ param(
   [string]$YaAgcDir = "",
   [string]$Bash = "",
   [string]$BuildDir = "",
+  [int]$SkipRows = 0,
 
   [string]$CandidateTrace = "embedded\tests\agc_trace_real_candidate.csv",
   [string]$ReferenceTrace = "embedded\tests\agc_trace_real_yaagc.csv",
@@ -44,6 +45,10 @@ function Invoke-PowershellScript {
 
 if ($Steps -le 0) {
   throw "-Steps must be greater than zero."
+}
+
+if ($SkipRows -lt 0) {
+  throw "-SkipRows must be zero or greater."
 }
 
 if ($CpuOnly) {
@@ -103,6 +108,7 @@ $yaagcArgs = @(
   "-File", (Join-Path $ScriptDir "run_yaagc_reference_trace.ps1"),
   "-Output", $referenceOut,
   "-Steps", "$Steps",
+  "-SkipRows", "$SkipRows",
   "-RomImage", $romImage
 )
 if ($VirtualAgcRoot.Trim().Length -gt 0) {
@@ -130,6 +136,7 @@ $candidateArgs = @(
   "-File", (Join-Path $ScriptDir "run_agc_trace_validation.ps1"),
   "-Mode", "Rope",
   "-Steps", "$Steps",
+  "-SkipRows", "$SkipRows",
   "-CandidateTrace", $candidateOut,
   "-RopeBin", $romImage,
   "-AllowRunnerFailure"

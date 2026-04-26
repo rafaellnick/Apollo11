@@ -101,6 +101,14 @@ Build and emit the current embedded-core trace:
 powershell -ExecutionPolicy Bypass -File embedded\tools\run_agc_trace_validation.ps1
 ```
 
+To validate a later trace window without writing a huge mission-length CSV, pass `-SkipRows`.
+Both the yaAGC reference driver and the embedded-core trace runner execute the skipped
+instructions but only emit the requested window:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File embedded\tools\run_real_rope_trace_validation.ps1 -Program Comanche055 -Steps 65536 -SkipRows 1048576 -CandidateTrace embedded\tests\agc_trace_window_comanche_1048576_candidate.csv -ReferenceTrace embedded\tests\agc_trace_window_comanche_1048576_yaagc.csv
+```
+
 Compare it with a reference CSV:
 
 ```powershell
@@ -139,7 +147,7 @@ That command:
 - generates an ignored local `embedded/tests/agc_trace_real_candidate.csv` by loading the same temporary yaYUL `MAIN.agc.bin` directly into the embedded core
 - compares both traces and prints the first mismatching columns without failing the whole run
 
-The default real-rope comparison is intentionally faithful to yaAGC's hardware timing. It enables the embedded machine-timing layer for scaler steals, `TIME1..TIME6` counter pulses, interrupt-entry rows, channel-10 DSKY output-row latching, channel `034/035` downrupt scheduling, `UPRUPT`/`INLINK`, channel-13 radar and hand-controller traps, and first-pass channel-77 restart-monitor latches. The checked-in faithful reference currently validates 1048576 real Comanche055 trace rows with all columns matching.
+The default real-rope comparison is intentionally faithful to yaAGC's hardware timing. It enables the embedded machine-timing layer for scaler steals, `TIME1..TIME6` counter pulses, interrupt-entry rows, channel-10 DSKY output-row latching, channel `034/035` downrupt scheduling, `UPRUPT`/`INLINK`, channel-13 radar and hand-controller traps, channel-77 restart-monitor latches, radar source-word queues, downlink frame capture, and bit/parity-checked uplink words. The checked-in faithful reference currently validates 1048576 real Comanche055 trace rows with all columns matching.
 
 The same path can validate the Lunar Module rope without rebuilding `embedded/esp32_agc_core/rope_image.h`, because the candidate runner receives the temporary yaYUL binary via `--rope-bin`:
 
@@ -155,6 +163,16 @@ powershell -ExecutionPolicy Bypass -File embedded\tools\run_real_rope_trace_vali
 
 CPU-only mode freezes yaAGC's asynchronous scaler/downrupt scheduling and writes `embedded/tests/agc_trace_real_cpu_yaagc.csv`. The checked-in CPU-only reference currently validates the embedded core for 4096 real Comanche instructions with all trace columns matching.
 
+The current expanded local validation windows are:
+
+```text
+Comanche055 faithful: rows 1..1048576 passed against checked-in yaAGC reference
+Comanche055 faithful: rows 1048577..1114112 passed with -SkipRows 1048576 -Steps 65536
+Luminary099 faithful: rows 1..65536 passed against checked-in yaAGC reference
+Luminary099 faithful: rows 65537..131072 passed with -SkipRows 65536 -Steps 65536
+Comanche055 CPU-only: rows 1..4096 passed against yaAGC
+```
+
 You can also run each side manually:
 
 ```powershell
@@ -163,7 +181,7 @@ powershell -ExecutionPolicy Bypass -File embedded\tools\run_agc_trace_validation
 powershell -ExecutionPolicy Bypass -File embedded\tools\compare_agc_trace.ps1 -CandidateTrace embedded\tests\agc_trace_real_candidate.csv -ReferenceTrace embedded\tests\agc_trace_real_yaagc.csv -AllowMismatch -MaxMismatches 20
 ```
 
-At this stage mismatches beyond the checked validation windows are still expected: the embedded core now has executable first-pass opcode, edit-register, scaler, interrupt-entry, downrupt/uplink, restart-monitor, radar, hand-controller, and channel behavior, while yaAGC remains the historical reference. The useful artifact is the first mismatch location; it tells us exactly which semantic layer to tighten next.
+At this stage mismatches beyond the checked validation windows are still possible: the embedded core now has executable first-pass opcode, edit-register, scaler, interrupt-entry, downrupt/uplink, restart-monitor, radar, hand-controller, parity, and channel behavior, while yaAGC remains the historical reference. The useful artifact is the first mismatch location; it tells us exactly which semantic layer to tighten next.
 
 ## Current emulator status
 
@@ -180,7 +198,10 @@ The core now has:
 - MCT-driven counter pulses for `TIME1..TIME6`, keyrupt input service, hardware downrupt scheduling after channel `034/035`, and downlink channel monitoring
 - yaAGC-style machine timing for scaler overflows, pre-instruction steals, in-instruction extra-delay folding, `TIME1..TIME6` pulses, and interrupt-entry timing rows
 - first-pass `UPRUPT`/`INLINK` support through channel `0173` command input and erasable register `00045`
+- bit-level uplink receiver support with yaYUL-style 15-bit word plus parity-bit conversion and channel-77 parity-fail restart behavior
+- downlink frame capture for channel `034/035` pairs, including sequence/cycle metadata and queue-overrun counters
 - first-pass channel-13 radar activity and hand-controller trap behavior for `RADAR` and `HANDRUPT`
+- deterministic radar source-word queueing into `RNRAD` before `RADAR` interrupt delivery
 - first-pass channel-77 restart-monitor/GOJAM latches for TC-trap, rupt-lock, and Night Watchman watchdog paths
 - read-side and write-side editing behavior for `CYR`, `SR`, `CYL`, and `EDOP`
 - ones-complement `INDEX` instruction addition, including the `-0` case
@@ -188,6 +209,6 @@ The core now has:
 - yaAGC-aligned double-precision `DV` and `MP` edge behavior, including signed zero, overflow/nonsense divide cases, and `A:L` conversion
 - yaAGC-aligned `RESUME`/`BRUPT` substitution when a pending interrupt vectors before the substituted instruction executes
 - a yaAGC reference trace path that passes 4096 CPU-only Comanche055 instructions against the embedded core
-- a yaAGC faithful hardware-timing trace path that passes 1048576 Comanche055 rows and 65536 Luminary099 rows against the embedded core
+- a yaAGC faithful hardware-timing trace path that passes 1048576 checked Comanche055 rows, an additional 65536-row Comanche055 window, and two 65536-row Luminary099 windows against the embedded core
 
-This is still not enough to claim a complete native AGC. The CPU-only opcode/channel path has a 4096-instruction yaAGC validation window and the faithful hardware-timing path now has large but finite Comanche/Luminary windows. The previously missing downrupt/uplink scheduling, restart-watchdog behavior, radar/hand-controller traps, peripheral interleaving, double-precision arithmetic edge cases, and RESUME/substitution interrupt timing now exist as executable models. What remains before calling it "full native AGC" is historical validation beyond those windows, exact peripheral data-source modeling, restart/parity edge cases, full uplink/downlink electrical behavior, and mission-length Comanche/Luminary runs against yaAGC/VirtualAGC traces.
+This is still not enough to claim a complete historical AGC replica. The CPU-only opcode/channel path has a 4096-instruction yaAGC validation window and the faithful hardware-timing path now has large but finite Comanche/Luminary windows. The previously missing downrupt/uplink scheduling, restart-watchdog behavior, radar/hand-controller traps, peripheral interleaving, double-precision arithmetic edge cases, RESUME/substitution interrupt timing, restart/parity hooks, and downlink/uplink data queues now exist as executable models. What remains before calling it "full native AGC" is continuous mission-length validation, broader trace sampling around every major mission phase, and replacing bench-test data sources with faithful spacecraft electrical/sensor models.

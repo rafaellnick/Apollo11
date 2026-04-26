@@ -30,8 +30,8 @@ What is implemented now:
 - MCT-based instruction cycle accounting for core execution and scheduled peripheral timing
 - Block II interrupt-vector mapping for `T6RUPT`, `T5RUPT`, `T3RUPT`, `T4RUPT`, `KEYRUPT1/2`, `UPRUPT`, `DOWNRUPT`, `RADAR`, and `HANDRUPT`
 - timer/counter pulses for `TIME1..TIME6`, `DOWNRUPT`, keyrupt, and downlink channel monitoring
-- a desktop yaAGC validation path that now passes 4096 CPU-only Comanche055 rows, 1048576 faithful Comanche055 rows, and 65536 faithful Luminary099 rows
-- a first machine-cycle timing layer for scaler steals, timer counter pulses, interrupt-entry rows, channel-10 DSKY output-row latches, channel `034/035` downrupt scheduling, uplink `INLINK`/`UPRUPT`, channel-13 radar/hand-controller traps, and channel-77 restart-monitor latches
+- a desktop yaAGC validation path that now passes 4096 CPU-only Comanche055 rows, 1048576 checked faithful Comanche055 rows, a second 65536-row Comanche055 window after that first million, and two 65536-row faithful Luminary099 windows
+- a first machine-cycle timing layer for scaler steals, timer counter pulses, interrupt-entry rows, channel-10 DSKY output-row latches, channel `034/035` downrupt scheduling, uplink `INLINK`/`UPRUPT`, channel-13 radar/hand-controller traps, channel-77 restart-monitor latches, radar source-word queues, downlink frame queues, and bit/parity-checked uplink words
 - yaAGC-aligned `DV`/`MP` double-precision arithmetic edge behavior and `RESUME`/`BRUPT` interrupt-substitution timing
 - physics-inspired mission telemetry helpers for ascent, coast, orbit, descent, and reentry
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
@@ -43,7 +43,7 @@ What is implemented now:
 - an `ESP8266` DSKY slave with a Wi-Fi browser interface for the first bench test
 - a `Mega` starter that scans buttons, drives lamps, and mirrors state to an LCD
 
-The ESP32 core can load the generated Comanche rope image, and the first real timing/peripheral trap layer now runs in both the desktop harness and the ESP32 loop. Full mission execution still depends on extending validation beyond the current windows, replacing placeholder peripheral data with faithful device models, and proving mission-length Comanche/Luminary behavior against yaAGC/VirtualAGC.
+The ESP32 core can load the generated Comanche rope image, and the first real timing/peripheral trap layer now runs in both the desktop harness and the ESP32 loop. This is close enough to start serious native-AGC bench work, but not enough to claim a historically complete AGC replica. Full mission execution still depends on continuous mission-length Comanche/Luminary runs, external sensor/electrical source models, and broader yaAGC/VirtualAGC trace coverage around every mission phase.
 
 ## Folder layout
 

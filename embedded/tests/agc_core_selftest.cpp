@@ -119,6 +119,28 @@ int main() {
   assert((uplinkCore.readChannel(0033) &
           agc::Core::kChannel33UplinkTooFast) == 0);
 
+  agc::Core physicalUplinkCore;
+  agc::MachineTiming physicalUplinkTiming;
+  const uint16_t physicalUplinkWord =
+      agc::Core::appendOddParityBit(012345);
+  uint16_t strippedUplinkWord = 0;
+  assert(agc::Core::hasOddParity16(physicalUplinkWord));
+  assert(agc::Core::physicalWordToData(physicalUplinkWord,
+                                       &strippedUplinkWord));
+  assert(strippedUplinkWord == 012345);
+  assert(physicalUplinkTiming.receivePhysicalUplinkWord(physicalUplinkCore,
+                                                        physicalUplinkWord));
+  assert(physicalUplinkTiming.uplinkWordCount() == 1);
+  assert(physicalUplinkCore.readErasable(agc::Core::kRegINLINK) == 012345);
+  assert((physicalUplinkCore.pendingInterruptMask() &
+          (1U << agc::Core::kInterruptUprupt)) != 0);
+  assert(!physicalUplinkTiming.receivePhysicalUplinkWord(
+      physicalUplinkCore, static_cast<uint16_t>(physicalUplinkWord ^ 1U)));
+  assert(physicalUplinkTiming.uplinkParityRejectCount() == 1);
+  assert(physicalUplinkCore.restartLight());
+  assert((physicalUplinkCore.readChannel(agc::Core::kChannelRestartMonitor) &
+          agc::Core::kCh77ParityFail) != 0);
+
   agc::Core handTrapCore;
   handTrapCore.setA(agc::Core::kChannel13Trap31A);
   handTrapCore.writeFixed(agc::Core::kBootAddress,
@@ -181,6 +203,13 @@ int main() {
     downruptTiming.observeCoreEvents(downruptCore);
   }
   assert(downruptTiming.downruptCount() == 0);
+  assert(downruptTiming.downlinkFrameCount() == 1);
+  agc::MachineTiming::DownlinkFrame downlinkFrame = {};
+  assert(downruptTiming.popDownlinkFrame(&downlinkFrame));
+  assert(downlinkFrame.sequence == 0);
+  assert(downlinkFrame.word0 == 012345);
+  assert(downlinkFrame.word1 == 012345);
+  assert(downruptTiming.downlinkFrameCount() == 0);
   downruptCore.advanceCycles(1707);
   downruptTiming.serviceScheduledEvents(downruptCore);
   assert((downruptCore.pendingInterruptMask() &
@@ -190,6 +219,7 @@ int main() {
   agc::Core radarCore;
   agc::MachineTiming radarTiming;
   radarTiming.setRestartMonitorsEnabled(false);
+  assert(radarTiming.enqueueRadarWord(023456));
   radarCore.writeChannel(agc::Core::kChannelCounterEnable,
                          agc::Core::kChannel13RadarActivity);
   for (uint16_t i = 0; i < 12000 && radarTiming.radarRuptCount() == 0; ++i) {
@@ -201,6 +231,7 @@ int main() {
           (1U << agc::Core::kInterruptRadarRupt)) != 0);
   assert((radarCore.readChannel(agc::Core::kChannelCounterEnable) &
           agc::Core::kChannel13RadarActivity) == 0);
+  assert(radarCore.readErasable(agc::Core::kRegRNRAD) == 023456);
 
   agc::Core watchdogCore;
   agc::MachineTiming watchdogTiming;

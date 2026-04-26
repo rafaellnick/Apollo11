@@ -28,6 +28,7 @@ enum class TraceMode {
 struct Options {
   TraceMode mode = TraceMode::Synthetic;
   uint32_t steps = 0;
+  uint32_t skipRows = 0;
   bool hardwareTiming = false;
   std::string ropeBinPath;
 };
@@ -222,14 +223,16 @@ bool loadYayulRopeBinary(agc::Core& core, const std::string& path) {
   return core.loadRopeImage(image);
 }
 
-bool parseUnsigned(const char* text, uint32_t* value) {
+bool parseUnsigned(const char* text,
+                   uint32_t* value,
+                   bool allowZero = false) {
   if (text == nullptr || *text == '\0') {
     return false;
   }
 
   char* end = nullptr;
   const unsigned long parsed = std::strtoul(text, &end, 10);
-  if (end == text || *end != '\0' || parsed == 0 ||
+  if (end == text || *end != '\0' || (!allowZero && parsed == 0) ||
       parsed > 10000000UL) {
     return false;
   }
@@ -240,7 +243,8 @@ bool parseUnsigned(const char* text, uint32_t* value) {
 
 void printUsage(const char* argv0) {
   std::cerr << "Usage: " << argv0
-            << " [--mode synthetic|rope] [--steps N] [--hardware-timing]"
+            << " [--mode synthetic|rope] [--steps N] [--skip-rows N]"
+            << " [--hardware-timing]"
             << " [--rope-bin MAIN.agc.bin]\n";
 }
 
@@ -259,6 +263,10 @@ bool parseOptions(int argc, char** argv, Options* options) {
       }
     } else if (std::strcmp(argv[i], "--steps") == 0 && i + 1 < argc) {
       if (!parseUnsigned(argv[++i], &options->steps)) {
+        return false;
+      }
+    } else if (std::strcmp(argv[i], "--skip-rows") == 0 && i + 1 < argc) {
+      if (!parseUnsigned(argv[++i], &options->skipRows, true)) {
         return false;
       }
     } else if (std::strcmp(argv[i], "--hardware-timing") == 0) {
@@ -307,9 +315,11 @@ int main(int argc, char** argv) {
       options.steps != 0
           ? options.steps
           : (options.mode == TraceMode::Rope ? kRopeTraceSteps : kTraceSteps);
+  const uint32_t totalRows = options.skipRows + steps;
 
   printTraceHeader();
-  for (uint32_t step = 1; step <= steps; ++step) {
+  for (uint32_t step = 1; step <= totalRows; ++step) {
+    const bool emitRow = step > options.skipRows;
     if (useHardwareTiming) {
       machineTiming.serviceScheduledEvents(core);
       const uint16_t pc = core.previewAddress();
@@ -317,9 +327,11 @@ int main(int argc, char** argv) {
       const bool extended = core.previewInstructionExtended();
       const uint16_t stallMct = machineTiming.consumeStallCycles(core);
       if (stallMct > 0) {
-        printTraceRow(makeTraceSnapshot(core, pc, instruction, extended,
-                                        stallMct),
-                      step);
+        if (emitRow) {
+          printTraceRow(makeTraceSnapshot(core, pc, instruction, extended,
+                                          stallMct),
+                        step);
+        }
         continue;
       }
 
@@ -333,10 +345,12 @@ int main(int argc, char** argv) {
         const uint16_t rowMct =
             static_cast<uint16_t>(core.cycles() - cyclesBefore);
         machineTiming.observeCoreEvents(core, false);
-        printTraceRow(makeTraceSnapshot(core, interruptedPc,
-                                        interruptedInstruction, extended,
-                                        rowMct),
-                      step);
+        if (emitRow) {
+          printTraceRow(makeTraceSnapshot(core, interruptedPc,
+                                          interruptedInstruction, extended,
+                                          rowMct),
+                        step);
+        }
         continue;
       }
     }
@@ -349,8 +363,11 @@ int main(int argc, char** argv) {
       machineTiming.observeCoreEvents(core);
       rowMct = core.cycles() - cyclesBefore;
     }
-    printTraceRow(makeInstructionSnapshot(core, static_cast<uint16_t>(rowMct)),
-                  step);
+    if (emitRow) {
+      printTraceRow(makeInstructionSnapshot(core,
+                                            static_cast<uint16_t>(rowMct)),
+                    step);
+    }
     if (!ok) {
       break;
     }

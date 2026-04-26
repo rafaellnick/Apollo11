@@ -9,12 +9,25 @@ namespace agc {
 
 class MachineTiming {
  public:
+  struct DownlinkFrame {
+    uint32_t cycle;
+    uint16_t word0;
+    uint16_t word1;
+    uint16_t sequence;
+  };
+
   MachineTiming() { reset(); }
 
   void reset() {
     scalerCounter_ = 0;
     pendingExtraDelay_ = 0;
     downlinkLatch_ = 0;
+    downlinkWord0_ = 0;
+    downlinkWord1_ = 0;
+    downlinkFrameHead_ = 0;
+    downlinkFrameCount_ = 0;
+    downlinkFrameSequence_ = 0;
+    downlinkFrameDropped_ = 0;
     downruptTimeValid_ = false;
     downruptTime_ = 0;
     nightWatchman_ = false;
@@ -24,6 +37,14 @@ class MachineTiming {
     noTc_ = false;
     restartMonitorsEnabled_ = true;
     radarGateCounter_ = 0;
+    radarDataWord_ = 0;
+    radarQueueHead_ = 0;
+    radarQueueCount_ = 0;
+    radarDropped_ = 0;
+    uplinkShiftRegister_ = 0;
+    uplinkBitCount_ = 0;
+    uplinkWordCount_ = 0;
+    uplinkParityRejectCount_ = 0;
     scalerOverflowCount_ = 0;
     stealCycleCount_ = 0;
     counterPulseCount_ = 0;
@@ -105,14 +126,17 @@ class MachineTiming {
   void observeCoreEvents(Core& core, bool executedInstruction = true) {
     const uint8_t flags = core.takeHardwareWriteFlags();
     if ((flags & Core::kHardwareWriteDownlinkWord0) != 0) {
+      downlinkWord0_ = core.readChannel(Core::kChannelDownlinkWord0);
       downlinkLatch_ |= 1;
     }
     if ((flags & Core::kHardwareWriteDownlinkWord1) != 0) {
+      downlinkWord1_ = core.readChannel(Core::kChannelDownlinkWord1);
       downlinkLatch_ |= 2;
     }
     if (downlinkLatch_ == 3) {
       downruptTime_ = core.cycles() + kDownruptDelayMct;
       downruptTimeValid_ = true;
+      pushDownlinkFrame(core.cycles(), downlinkWord0_, downlinkWord1_);
       downlinkLatch_ = 0;
     }
 
@@ -146,6 +170,94 @@ class MachineTiming {
   uint32_t restartAlarmCount() const { return restartAlarmCount_; }
   uint32_t radarRuptCount() const { return radarRuptCount_; }
   uint32_t handruptCount() const { return handruptCount_; }
+  uint32_t radarDroppedCount() const { return radarDropped_; }
+  uint32_t uplinkWordCount() const { return uplinkWordCount_; }
+  uint32_t uplinkParityRejectCount() const {
+    return uplinkParityRejectCount_;
+  }
+  uint8_t uplinkBitCount() const { return uplinkBitCount_; }
+  uint8_t downlinkFrameCount() const { return downlinkFrameCount_; }
+  uint32_t downlinkFrameDroppedCount() const {
+    return downlinkFrameDropped_;
+  }
+
+  void setRadarDataWord(uint16_t word) {
+    radarDataWord_ = word & Core::kWordMask;
+  }
+
+  bool enqueueRadarWord(uint16_t word) {
+    if (radarQueueCount_ >= kRadarQueueSize) {
+      ++radarDropped_;
+      return false;
+    }
+
+    const uint8_t index =
+        static_cast<uint8_t>((radarQueueHead_ + radarQueueCount_) %
+                             kRadarQueueSize);
+    radarQueue_[index] = word & Core::kWordMask;
+    ++radarQueueCount_;
+    return true;
+  }
+
+  bool popDownlinkFrame(DownlinkFrame* frame) {
+    if (downlinkFrameCount_ == 0) {
+      return false;
+    }
+
+    if (frame != nullptr) {
+      *frame = downlinkFrames_[downlinkFrameHead_];
+    }
+    downlinkFrameHead_ = static_cast<uint8_t>((downlinkFrameHead_ + 1) %
+                                              kDownlinkFrameQueueSize);
+    --downlinkFrameCount_;
+    return true;
+  }
+
+  void clearDownlinkFrames() {
+    downlinkFrameHead_ = 0;
+    downlinkFrameCount_ = 0;
+  }
+
+  void resetUplinkReceiver() {
+    uplinkShiftRegister_ = 0;
+    uplinkBitCount_ = 0;
+  }
+
+  bool receiveUplinkBit(Core& core, bool oneBit) {
+    uplinkShiftRegister_ =
+        static_cast<uint16_t>(((uplinkShiftRegister_ << 1) |
+                               (oneBit ? 1U : 0U)) &
+                              Core::kWordMask);
+    ++uplinkBitCount_;
+    if (uplinkBitCount_ < 15) {
+      return false;
+    }
+
+    core.receiveUplinkWord(uplinkShiftRegister_);
+    ++uplinkWordCount_;
+    resetUplinkReceiver();
+    return true;
+  }
+
+  bool receiveUplinkWord(Core& core, uint16_t word) {
+    bool accepted = false;
+    for (int8_t bit = 14; bit >= 0; --bit) {
+      accepted = receiveUplinkBit(core, (word & (1U << bit)) != 0);
+    }
+    return accepted;
+  }
+
+  bool receivePhysicalUplinkWord(Core& core, uint16_t physicalWord) {
+    uint16_t word = 0;
+    if (!Core::physicalWordToData(physicalWord, &word)) {
+      ++uplinkParityRejectCount_;
+      core.gojam(Core::kCh77ParityFail);
+      resetUplinkReceiver();
+      return false;
+    }
+
+    return receiveUplinkWord(core, word);
+  }
 
   void setRestartMonitorsEnabled(bool enabled) {
     restartMonitorsEnabled_ = enabled;
@@ -165,6 +277,8 @@ class MachineTiming {
   static constexpr int16_t kScalerOverflow = 80;
   static constexpr uint16_t kChannelScaler2 = 0003;
   static constexpr uint16_t kChannelScaler1 = 0004;
+  static constexpr uint8_t kDownlinkFrameQueueSize = 16;
+  static constexpr uint8_t kRadarQueueSize = 16;
 
   bool nextCycleWouldStall(const Core& core) const {
     if (pendingExtraDelay_ > 0) {
@@ -301,10 +415,41 @@ class MachineTiming {
                         static_cast<uint16_t>(
                             core.readChannel(Core::kChannelCounterEnable) &
                             ~Core::kChannel13RadarActivity));
-      core.writeErasable(Core::kRegRNRAD, radarDataWord_);
+      core.writeErasable(Core::kRegRNRAD, nextRadarDataWord());
       core.requestInterrupt(Core::kInterruptRadarRupt);
       ++radarRuptCount_;
     }
+  }
+
+  void pushDownlinkFrame(uint32_t cycle, uint16_t word0, uint16_t word1) {
+    if (downlinkFrameCount_ >= kDownlinkFrameQueueSize) {
+      downlinkFrameHead_ = static_cast<uint8_t>((downlinkFrameHead_ + 1) %
+                                                kDownlinkFrameQueueSize);
+      --downlinkFrameCount_;
+      ++downlinkFrameDropped_;
+    }
+
+    const uint8_t index =
+        static_cast<uint8_t>((downlinkFrameHead_ + downlinkFrameCount_) %
+                             kDownlinkFrameQueueSize);
+    DownlinkFrame frame = {cycle,
+                           static_cast<uint16_t>(word0 & Core::kWordMask),
+                           static_cast<uint16_t>(word1 & Core::kWordMask),
+                           downlinkFrameSequence_++};
+    downlinkFrames_[index] = frame;
+    ++downlinkFrameCount_;
+  }
+
+  uint16_t nextRadarDataWord() {
+    if (radarQueueCount_ == 0) {
+      return radarDataWord_;
+    }
+
+    radarDataWord_ = radarQueue_[radarQueueHead_] & Core::kWordMask;
+    radarQueueHead_ = static_cast<uint8_t>((radarQueueHead_ + 1) %
+                                           kRadarQueueSize);
+    --radarQueueCount_;
+    return radarDataWord_;
   }
 
   void serviceRestartMonitors(Core& core, uint16_t scaler1) {
@@ -373,6 +518,13 @@ class MachineTiming {
   int16_t scalerCounter_ = 0;
   uint16_t pendingExtraDelay_ = 0;
   uint8_t downlinkLatch_ = 0;
+  uint16_t downlinkWord0_ = 0;
+  uint16_t downlinkWord1_ = 0;
+  DownlinkFrame downlinkFrames_[kDownlinkFrameQueueSize] = {};
+  uint8_t downlinkFrameHead_ = 0;
+  uint8_t downlinkFrameCount_ = 0;
+  uint16_t downlinkFrameSequence_ = 0;
+  uint32_t downlinkFrameDropped_ = 0;
   bool downruptTimeValid_ = false;
   uint32_t downruptTime_ = 0;
   bool nightWatchman_ = false;
@@ -383,6 +535,14 @@ class MachineTiming {
   bool restartMonitorsEnabled_ = true;
   uint8_t radarGateCounter_ = 0;
   uint16_t radarDataWord_ = 0;
+  uint16_t radarQueue_[kRadarQueueSize] = {};
+  uint8_t radarQueueHead_ = 0;
+  uint8_t radarQueueCount_ = 0;
+  uint32_t radarDropped_ = 0;
+  uint16_t uplinkShiftRegister_ = 0;
+  uint8_t uplinkBitCount_ = 0;
+  uint32_t uplinkWordCount_ = 0;
+  uint32_t uplinkParityRejectCount_ = 0;
   uint32_t scalerOverflowCount_ = 0;
   uint32_t stealCycleCount_ = 0;
   uint32_t counterPulseCount_ = 0;

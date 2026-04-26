@@ -6,6 +6,7 @@ param(
   [ValidateSet("Synthetic", "Rope")]
   [string]$Mode = "Synthetic",
   [int]$Steps = 0,
+  [int]$SkipRows = 0,
   [string]$RopeBin = "",
   [switch]$HardwareTiming,
   [switch]$AllowRunnerFailure,
@@ -13,6 +14,14 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Steps -lt 0) {
+  throw "-Steps must be zero or greater."
+}
+
+if ($SkipRows -lt 0) {
+  throw "-SkipRows must be zero or greater."
+}
 
 function Find-Compiler {
   param([string]$RequestedCompiler)
@@ -88,6 +97,9 @@ if ($NoRun) {
 $traceArgs = @("--mode", $Mode.ToLowerInvariant())
 if ($Steps -gt 0) {
   $traceArgs += @("--steps", "$Steps")
+}
+if ($SkipRows -gt 0) {
+  $traceArgs += @("--skip-rows", "$SkipRows")
 }
 if ($HardwareTiming) {
   $traceArgs += "--hardware-timing"

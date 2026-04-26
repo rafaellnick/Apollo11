@@ -38,6 +38,7 @@ enum {
 
 typedef struct {
   unsigned steps;
+  unsigned skip_rows;
   const char *rom_image;
   int cpu_only;
 } TraceOptions;
@@ -236,11 +237,14 @@ static int run_one_instruction(agc_t *state, uint64_t *mct) {
 
 static int parse_options(int argc, char **argv, TraceOptions *options) {
   options->steps = kDefaultSteps;
+  options->skip_rows = 0;
   options->rom_image = NULL;
   options->cpu_only = 0;
   for (int i = 1; i < argc; ++i) {
     if (strcmp(argv[i], "--steps") == 0 && i + 1 < argc) {
       options->steps = (unsigned)strtoul(argv[++i], NULL, 10);
+    } else if (strcmp(argv[i], "--skip-rows") == 0 && i + 1 < argc) {
+      options->skip_rows = (unsigned)strtoul(argv[++i], NULL, 10);
     } else if (strcmp(argv[i], "--rom") == 0 && i + 1 < argc) {
       options->rom_image = argv[++i];
     } else if (strcmp(argv[i], "--cpu-only") == 0) {
@@ -257,7 +261,8 @@ static int parse_options(int argc, char **argv, TraceOptions *options) {
 
 static void print_usage(const char *argv0) {
   fprintf(stderr,
-          "Usage: %s [--steps N] [--rom MAIN.agc.bin] [--cpu-only]\n",
+          "Usage: %s [--steps N] [--skip-rows N] [--rom MAIN.agc.bin] "
+          "[--cpu-only]\n",
           argv0);
 }
 
@@ -297,7 +302,8 @@ int main(int argc, char **argv) {
   }
 
   print_header();
-  for (unsigned step = 1; step <= options.steps; ++step) {
+  const unsigned total_rows = options.skip_rows + options.steps;
+  for (unsigned step = 1; step <= total_rows; ++step) {
     const uint16_t pc = (uint16_t)state.Erasable[0][RegZ] & kAddressMask;
     const uint16_t instr = executed_instruction(&state, pc);
     const int extended = state.ExtraCode != 0;
@@ -309,7 +315,9 @@ int main(int argc, char **argv) {
       return run_result;
     }
 
-    print_row(&state, step, pc, instr, extended, mct);
+    if (step > options.skip_rows) {
+      print_row(&state, step, pc, instr, extended, mct);
+    }
   }
 
   return 0;

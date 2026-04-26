@@ -409,6 +409,39 @@ class Core {
     return true;
   }
 
+  static bool hasOddParity16(uint16_t physicalWord) {
+    uint8_t ones = 0;
+    for (uint8_t bit = 0; bit < 16; ++bit) {
+      if ((physicalWord & (1U << bit)) != 0) {
+        ++ones;
+      }
+    }
+    return (ones & 1U) != 0;
+  }
+
+  static uint16_t stripParityBit(uint16_t physicalWord) {
+    return static_cast<uint16_t>((physicalWord >> 1) & kWordMask);
+  }
+
+  static uint16_t appendOddParityBit(uint16_t dataWord) {
+    uint16_t physicalWord =
+        static_cast<uint16_t>((dataWord & kWordMask) << 1);
+    if (!hasOddParity16(physicalWord)) {
+      physicalWord |= 1U;
+    }
+    return physicalWord;
+  }
+
+  static bool physicalWordToData(uint16_t physicalWord, uint16_t* dataOut) {
+    if (!hasOddParity16(physicalWord)) {
+      return false;
+    }
+    if (dataOut != nullptr) {
+      *dataOut = stripParityBit(physicalWord);
+    }
+    return true;
+  }
+
   uint16_t readChannel(uint16_t channel) const {
     channel &= kIoAddressMask;
     if (channel == kRegL || channel == kRegQ) {

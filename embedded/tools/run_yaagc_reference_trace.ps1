@@ -7,7 +7,8 @@ param(
   [int]$Steps = 18,
   [string]$RomImage = "",
   [switch]$CpuOnly,
-  [switch]$NoRun
+  [switch]$NoRun,
+  [int]$SkipRows = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,14 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $EmbeddedDir = Split-Path -Parent $ScriptDir
 $RepoRoot = Split-Path -Parent $EmbeddedDir
+
+if ($Steps -le 0) {
+  throw "-Steps must be greater than zero."
+}
+
+if ($SkipRows -lt 0) {
+  throw "-SkipRows must be zero or greater."
+}
 
 function Resolve-LocalPath {
   param([string]$Path)
@@ -147,6 +156,9 @@ $runParts = @(
   "--steps",
   "$Steps"
 )
+if ($SkipRows -gt 0) {
+  $runParts += @("--skip-rows", "$SkipRows")
+}
 if ($romImagePath.Trim().Length -gt 0) {
   $runParts += @("--rom", (Quote-Bash (ConvertTo-MsysPath $romImagePath)))
 }
