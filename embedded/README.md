@@ -113,6 +113,8 @@ N
 
 The ESP32 has a first launch monitor simulation for bench testing the DSKY flow. It is not yet the real Comanche rope running the Saturn V ascent. It is a mission sequencer that drives DSKY displays and serial status through major Apollo 11 ascent events: terminal count, liftoff, roll program, Max-Q, staging, S-IVB burn, and parking orbit insertion.
 
+Full Portuguese operating manual: `LAUNCH_SIMULATION_MANUAL.md`.
+
 Start it from the Web DSKY:
 
 ```text
