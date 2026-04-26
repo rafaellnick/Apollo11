@@ -1,5 +1,7 @@
 #include "agc_core.h"
 #include "dsky_protocol.h"
+#include "pinball_nouns.h"
+#include "rope_image.h"
 
 #include <Arduino.h>
 #include <stdlib.h>
@@ -31,6 +33,7 @@ constexpr uint8_t kLaunchDefaultTimeScale = 20;
 HardwareSerial panelSerial(2);
 agc::Core agcCore;
 dsky::State state;
+dsky::Phase phase;
 
 char panelLineBuffer[dsky::kLineBufferSize];
 size_t panelLineLength = 0;
@@ -81,6 +84,28 @@ struct MissionScenario {
   int16_t r3;
   uint16_t alarm;
   uint32_t lampMask;
+};
+
+struct MissionTelemetry {
+  int16_t getMin;
+  int16_t altitudeKm;
+  int16_t altitudeM;
+  int16_t velocityMs;
+  int16_t distanceKkm;
+  int16_t rangeM;
+  int16_t rangeKm;
+  int16_t burnSec;
+  int16_t deltaVMps;
+  int16_t imuRollDeg;
+  int16_t imuPitchDeg;
+  int16_t imuYawDeg;
+  int16_t radarAltitudeM;
+  int16_t radarRangeM;
+  int16_t propellantPct;
+  int16_t status;
+  int16_t evaMin;
+  int16_t sampleKg;
+  int16_t mcc;
 };
 
 constexpr LaunchEvent kLaunchEvents[] = {
@@ -301,6 +326,194 @@ void clearMissionScenario() {
   missionScenarioLampMask = 0;
 }
 
+void setPhaseText(const char* label, const char* r1Label,
+                  const char* r2Label, const char* r3Label) {
+  dsky::copyField(phase.label, sizeof(phase.label), label);
+  dsky::copyField(phase.r1Label, sizeof(phase.r1Label), r1Label);
+  dsky::copyField(phase.r2Label, sizeof(phase.r2Label), r2Label);
+  dsky::copyField(phase.r3Label, sizeof(phase.r3Label), r3Label);
+}
+
+MissionTelemetry computeTelemetryModel(const MissionScenario& scenario) {
+  MissionTelemetry telemetry = {};
+  telemetry.getMin = scenario.r1;
+  telemetry.altitudeKm = 0;
+  telemetry.altitudeM = 0;
+  telemetry.velocityMs = 0;
+  telemetry.distanceKkm = 0;
+  telemetry.rangeM = 0;
+  telemetry.rangeKm = 0;
+  telemetry.burnSec = 0;
+  telemetry.deltaVMps = 0;
+  telemetry.imuRollDeg = static_cast<int16_t>((scenario.noun * 7) % 360);
+  telemetry.imuPitchDeg = static_cast<int16_t>((scenario.noun * 3) % 180);
+  telemetry.imuYawDeg = static_cast<int16_t>((scenario.noun * 11) % 360);
+  telemetry.radarAltitudeM = 0;
+  telemetry.radarRangeM = 0;
+  telemetry.propellantPct = 100;
+  telemetry.status = scenario.r3;
+  telemetry.evaMin = 0;
+  telemetry.sampleKg = 0;
+  telemetry.mcc = 0;
+
+  switch (scenario.noun) {
+    case 20:
+      telemetry.altitudeKm = 185;
+      telemetry.velocityMs = 7800;
+      telemetry.propellantPct = 92;
+      break;
+    case 21:
+      telemetry.burnSec = 348;
+      telemetry.deltaVMps = 3200;
+      telemetry.propellantPct = 72;
+      break;
+    case 22:
+      telemetry.rangeM = 30;
+      telemetry.status = 1;
+      telemetry.propellantPct = 71;
+      break;
+    case 23:
+      telemetry.distanceKkm = 120;
+      telemetry.mcc = 2;
+      telemetry.propellantPct = 70;
+      break;
+    case 24:
+      telemetry.burnSec = 357;
+      telemetry.deltaVMps = 900;
+      telemetry.propellantPct = 55;
+      break;
+    case 25:
+      telemetry.altitudeKm = 111;
+      telemetry.status = 1;
+      break;
+    case 26:
+      telemetry.altitudeKm = 15;
+      telemetry.velocityMs = 1680;
+      telemetry.radarAltitudeM = 15000;
+      telemetry.radarRangeM = 24000;
+      telemetry.propellantPct = 44;
+      break;
+    case 27:
+      telemetry.altitudeM = 150;
+      telemetry.velocityMs = 50;
+      telemetry.radarAltitudeM = 150;
+      telemetry.radarRangeM = 320;
+      telemetry.propellantPct = 18;
+      break;
+    case 28:
+      telemetry.altitudeM = 0;
+      telemetry.status = 1;
+      telemetry.radarAltitudeM = 0;
+      telemetry.propellantPct = 17;
+      break;
+    case 29:
+      telemetry.evaMin = 151;
+      telemetry.sampleKg = 22;
+      telemetry.status = 1;
+      break;
+    case 30:
+      telemetry.burnSec = 435;
+      telemetry.velocityMs = 1800;
+      telemetry.propellantPct = 53;
+      break;
+    case 31:
+      telemetry.rangeKm = 0;
+      telemetry.status = 1;
+      telemetry.radarRangeM = 0;
+      break;
+    case 32:
+      telemetry.burnSec = 151;
+      telemetry.deltaVMps = 1000;
+      telemetry.propellantPct = 41;
+      break;
+    case 33:
+      telemetry.distanceKkm = 250;
+      telemetry.mcc = 0;
+      break;
+    case 34:
+      telemetry.altitudeKm = 122;
+      telemetry.velocityMs = 11000;
+      telemetry.propellantPct = 0;
+      break;
+    case 35:
+      telemetry.altitudeKm = 0;
+      telemetry.status = 1;
+      break;
+    default:
+      telemetry.altitudeKm = scenario.r2;
+      telemetry.velocityMs = scenario.r3;
+      break;
+  }
+
+  return telemetry;
+}
+
+int16_t telemetryValueForLabel(const MissionTelemetry& telemetry,
+                               const char* label,
+                               int16_t fallback) {
+  if (strcmp(label, "GET_MIN") == 0) {
+    return telemetry.getMin;
+  }
+  if (strcmp(label, "ALT_KM") == 0) {
+    return telemetry.altitudeKm;
+  }
+  if (strcmp(label, "ALT_M") == 0) {
+    return telemetry.altitudeM;
+  }
+  if (strcmp(label, "VEL_MS") == 0) {
+    return telemetry.velocityMs;
+  }
+  if (strcmp(label, "DIST_KKM") == 0) {
+    return telemetry.distanceKkm;
+  }
+  if (strcmp(label, "RANGE_M") == 0) {
+    return telemetry.rangeM;
+  }
+  if (strcmp(label, "RANGE_KM") == 0) {
+    return telemetry.rangeKm;
+  }
+  if (strcmp(label, "BURN_SEC") == 0) {
+    return telemetry.burnSec;
+  }
+  if (strcmp(label, "DV_MPS") == 0) {
+    return telemetry.deltaVMps;
+  }
+  if (strcmp(label, "DOCKED") == 0 || strcmp(label, "LANDED") == 0 ||
+      strcmp(label, "RECOVERY") == 0 || strcmp(label, "STATUS") == 0 ||
+      strcmp(label, "ORBIT") == 0) {
+    return telemetry.status;
+  }
+  if (strcmp(label, "EVA_MIN") == 0) {
+    return telemetry.evaMin;
+  }
+  if (strcmp(label, "SAMPLE_KG") == 0) {
+    return telemetry.sampleKg;
+  }
+  if (strcmp(label, "MCC") == 0) {
+    return telemetry.mcc;
+  }
+  if (strcmp(label, "ALARM") == 0) {
+    return fallback;
+  }
+  if (strcmp(label, "RECYCLE") == 0) {
+    return 1;
+  }
+  if (strcmp(label, "UPLINK") == 0) {
+    return 0;
+  }
+  if (strcmp(label, "STAR") == 0) {
+    return 1;
+  }
+  if (strcmp(label, "RHC") == 0) {
+    return 99;
+  }
+  if (strcmp(label, "MODE") == 0) {
+    return fallback;
+  }
+
+  return fallback;
+}
+
 void syncLamps() {
   state.lampMask = manualLampMask | launchLampMask | missionScenarioLampMask;
   dsky::setLamp(&state, dsky::kLampProg, entryMode != EntryMode::Idle);
@@ -322,6 +535,7 @@ void refreshDskyFromCore() {
   state.noun = clampDisplayCode(agcCore.readErasable(agc::Core::kPanelNoun));
 
   if (state.noun == 99) {
+    setPhaseText("JOYSTICK", "RHC_X", "RHC_Y", "RHC_SW");
     formatAgcWord(state.r1, sizeof(state.r1),
                   agcCore.readErasable(agc::Core::kInputRhcX));
     formatAgcWord(state.r2, sizeof(state.r2),
@@ -337,13 +551,18 @@ void refreshDskyFromCore() {
                   agc::Core::fromInt(launchVelocityMs));
   } else if (activeMissionScenario() != nullptr) {
     const MissionScenario* scenario = activeMissionScenario();
+    const MissionTelemetry telemetry = computeTelemetryModel(*scenario);
     formatAgcWord(state.r1, sizeof(state.r1),
-                  agc::Core::fromInt(scenario->r1));
+                  agc::Core::fromInt(telemetryValueForLabel(
+                      telemetry, scenario->r1Label, scenario->r1)));
     formatAgcWord(state.r2, sizeof(state.r2),
-                  agc::Core::fromInt(scenario->r2));
+                  agc::Core::fromInt(telemetryValueForLabel(
+                      telemetry, scenario->r2Label, scenario->r2)));
     formatAgcWord(state.r3, sizeof(state.r3),
-                  agc::Core::fromInt(scenario->r3));
+                  agc::Core::fromInt(telemetryValueForLabel(
+                      telemetry, scenario->r3Label, scenario->r3)));
   } else {
+    setPhaseText("AGC CORE", "COUNT", "A", "Z");
     formatAgcWord(state.r1, sizeof(state.r1),
                   agcCore.readErasable(agc::Core::kPanelCounter));
     formatAgcWord(state.r2, sizeof(state.r2), agcCore.getA());
@@ -568,6 +787,9 @@ void clearLaunchState() {
   launchLampMask = 0;
   lastLaunchEventIndex = -1;
   dsky::copyField(launchPhase, sizeof(launchPhase), "IDLE");
+  if (activeMissionScenario() == nullptr) {
+    setPhaseText("IDLE", "R1", "R2", "R3");
+  }
 }
 
 void configureMissionDisplay(const MissionScenario& scenario) {
@@ -578,6 +800,8 @@ void configureMissionDisplay(const MissionScenario& scenario) {
       agc::Core::kPanelAlarm,
       agc::Core::fromInt(static_cast<int16_t>(scenario.alarm)));
   state.flashVerbNoun = scenario.alarm != 0;
+  setPhaseText(scenario.label, scenario.r1Label, scenario.r2Label,
+               scenario.r3Label);
 }
 
 void emitMissionStatus(Stream& port) {
@@ -587,6 +811,7 @@ void emitMissionStatus(Stream& port) {
     return;
   }
 
+  const MissionTelemetry telemetry = computeTelemetryModel(*scenario);
   port.print(F("APOLLO11 N"));
   printTwoDigits(port, scenario->noun);
   port.print(F(" P"));
@@ -598,17 +823,33 @@ void emitMissionStatus(Stream& port) {
   port.print(F(" | "));
   port.print(scenario->r1Label);
   port.print(' ');
-  port.print(scenario->r1);
+  port.print(telemetryValueForLabel(telemetry, scenario->r1Label,
+                                    scenario->r1));
   port.print(F(" | "));
   port.print(scenario->r2Label);
   port.print(' ');
-  port.print(scenario->r2);
+  port.print(telemetryValueForLabel(telemetry, scenario->r2Label,
+                                    scenario->r2));
   port.print(F(" | "));
   port.print(scenario->r3Label);
   port.print(' ');
-  port.print(scenario->r3);
+  port.print(telemetryValueForLabel(telemetry, scenario->r3Label,
+                                    scenario->r3));
   port.print(F(" | ALM "));
   printFourDigits(port, scenario->alarm);
+  port.print(F(" | IMU R/P/Y "));
+  port.print(telemetry.imuRollDeg);
+  port.print('/');
+  port.print(telemetry.imuPitchDeg);
+  port.print('/');
+  port.print(telemetry.imuYawDeg);
+  port.print(F(" | RAD ALT/RNG "));
+  port.print(telemetry.radarAltitudeM);
+  port.print('/');
+  port.print(telemetry.radarRangeM);
+  port.print(F(" | PROP "));
+  port.print(telemetry.propellantPct);
+  port.print('%');
   port.println();
 }
 
@@ -654,6 +895,7 @@ void startLaunchSimulation() {
   lastLaunchEventIndex = -1;
   launchSecond = kLaunchStartSecond;
   computeLaunchTelemetry(launchSecond);
+  setPhaseText(launchPhase, "T_SEC", "ALT_KM", "VEL_MS");
   configureLaunchDisplay();
   refreshDskyFromCore();
 
@@ -671,6 +913,7 @@ void stopLaunchSimulation(bool resetPanel) {
     setCoreDisplayRegister(agc::Core::kPanelNoun, 36);
   }
 
+  setPhaseText("IDLE", "R1", "R2", "R3");
   refreshDskyFromCore();
   Serial.println(F("Apollo 11 launch simulation stopped."));
 }
@@ -685,6 +928,7 @@ void stopApollo11MissionProgram(bool resetPanel) {
     setCoreDisplayRegister(agc::Core::kPanelNoun, 36);
   }
 
+  setPhaseText("IDLE", "R1", "R2", "R3");
   clearAlarm();
   refreshDskyFromCore();
   Serial.println(F("Apollo 11 mission program stopped."));
@@ -737,11 +981,13 @@ void updateLaunchSimulation() {
 
   launchSecond = nextSecond;
   computeLaunchTelemetry(launchSecond);
+  setPhaseText(launchPhase, "T_SEC", "ALT_KM", "VEL_MS");
   const bool reachedOrbit = launchSecond >= kLaunchOrbitInsertionSecond;
   if (reachedOrbit) {
     launchMode = LaunchMode::Complete;
     launchLampMask = dsky::kLampProg | dsky::kLampTracker;
     dsky::copyField(launchPhase, sizeof(launchPhase), "PARKING ORBIT");
+    setPhaseText(launchPhase, "T_SEC", "ALT_KM", "VEL_MS");
   }
 
   configureLaunchDisplay();
@@ -945,6 +1191,15 @@ void emitStateFrame(Stream& port) {
   port.println(line);
 }
 
+void emitPhaseFrame(Stream& port) {
+  char line[dsky::kLineBufferSize];
+  if (!dsky::formatPhaseLine(phase, line, sizeof(line))) {
+    return;
+  }
+
+  port.println(line);
+}
+
 void emitCoreStatus(Stream& port) {
   port.print(F("CORE Z="));
   port.print(agcCore.getZ(), OCT);
@@ -957,7 +1212,13 @@ void emitCoreStatus(Stream& port) {
   port.print(F(" STATE="));
   port.print(static_cast<unsigned int>(agcCore.runState()));
   port.print(F(" FAULT="));
-  port.println(static_cast<unsigned int>(agcCore.fault()));
+  port.print(static_cast<unsigned int>(agcCore.fault()));
+  port.print(F(" EXT="));
+  port.print(agcCore.lastInstructionExtended() ? 1 : 0);
+  port.print(F(" IRQ="));
+  port.print(agcCore.pendingInterruptMask(), BIN);
+  port.print(F(" CH10="));
+  port.println(agcCore.readChannel(agc::Core::kChannelDSKY), OCT);
 }
 
 const __FlashStringHelper* runStateText() {
@@ -1044,6 +1305,7 @@ void emitCleanStatus(Stream& port) {
     port.print(launchTimeScale);
   } else if (activeMissionScenario() != nullptr) {
     const MissionScenario* scenario = activeMissionScenario();
+    const MissionTelemetry telemetry = computeTelemetryModel(*scenario);
     port.print(F(" | MSN N"));
     printTwoDigits(port, scenario->noun);
     port.print(' ');
@@ -1051,15 +1313,27 @@ void emitCleanStatus(Stream& port) {
     port.print(F(" | "));
     port.print(scenario->r1Label);
     port.print(' ');
-    port.print(scenario->r1);
+    port.print(telemetryValueForLabel(telemetry, scenario->r1Label,
+                                      scenario->r1));
     port.print(F(" | "));
     port.print(scenario->r2Label);
     port.print(' ');
-    port.print(scenario->r2);
+    port.print(telemetryValueForLabel(telemetry, scenario->r2Label,
+                                      scenario->r2));
     port.print(F(" | "));
     port.print(scenario->r3Label);
     port.print(' ');
-    port.print(scenario->r3);
+    port.print(telemetryValueForLabel(telemetry, scenario->r3Label,
+                                      scenario->r3));
+    port.print(F(" | IMU "));
+    port.print(telemetry.imuRollDeg);
+    port.print('/');
+    port.print(telemetry.imuPitchDeg);
+    port.print('/');
+    port.print(telemetry.imuYawDeg);
+    port.print(F(" PROP "));
+    port.print(telemetry.propellantPct);
+    port.print('%');
   }
   port.println();
 }
@@ -1099,6 +1373,9 @@ void handleConsoleCommand(char* line) {
     Serial.println(F("Commands:"));
     Serial.println(F("  KEY,<name>"));
     Serial.println(F("  RUN HALT STEP RESET STATE CORE"));
+    Serial.println(F("  ROPE,INFO ROPE,LOAD"));
+    Serial.println(F("  CHAN,<octal> CHAN,<octal>,<octal> IRQ,<0-7>"));
+    Serial.println(F("  PINBALL,<noun> PINBALL,LIST"));
     Serial.println(F("  PEEK,<octal-address>"));
     Serial.println(F("  POKE,<octal-address>,<octal-word>"));
     Serial.println(F("  JOY JOYCAL"));
@@ -1187,6 +1464,95 @@ void handleConsoleCommand(char* line) {
     calibrateJoystick();
     refreshDskyFromCore();
     emitJoystickStatus(Serial);
+    return;
+  }
+
+  if (strcmp(line, "ROPE,INFO") == 0) {
+    Serial.print(F("ROPE NAME="));
+    Serial.print(embedded_rope::kImage.name == nullptr
+                     ? "none"
+                     : embedded_rope::kImage.name);
+    Serial.print(F(" BANKS="));
+    Serial.print(static_cast<unsigned int>(embedded_rope::kImage.bankCount));
+    Serial.print(F(" WORDS="));
+    Serial.println(static_cast<unsigned long>(embedded_rope::kImage.bankCount) *
+                   agc::Core::kFixedBankSize);
+    return;
+  }
+
+  if (strcmp(line, "ROPE,LOAD") == 0) {
+    if (embedded_rope::kImage.words == nullptr ||
+        embedded_rope::kImage.bankCount == 0) {
+      Serial.println(F("ROPE no embedded image. Generate rope_image.h first."));
+      return;
+    }
+
+    if (agcCore.loadRopeImage(embedded_rope::kImage)) {
+      agcCore.start();
+      clearMissionScenario();
+      clearLaunchState();
+      refreshDskyFromCore();
+      Serial.println(F("ROPE loaded into fixed memory."));
+    } else {
+      Serial.println(F("ROPE load failed."));
+    }
+    return;
+  }
+
+  if (strncmp(line, "CHAN,", 5) == 0) {
+    char* channelText = line + 5;
+    char* valueText = strchr(channelText, ',');
+    const uint8_t channel = static_cast<uint8_t>(parseOctal(channelText));
+    if (valueText != nullptr) {
+      *valueText = '\0';
+      valueText++;
+      agcCore.writeChannel(channel, parseOctal(valueText));
+    }
+    Serial.print(F("CHAN,"));
+    Serial.print(channel, OCT);
+    Serial.print(F(","));
+    Serial.println(agcCore.readChannel(channel), OCT);
+    return;
+  }
+
+  if (strncmp(line, "IRQ,", 4) == 0) {
+    const uint8_t irq =
+        static_cast<uint8_t>(strtoul(line + 4, nullptr, 10));
+    agcCore.requestInterrupt(irq);
+    Serial.print(F("IRQ pending mask="));
+    Serial.println(agcCore.pendingInterruptMask(), BIN);
+    return;
+  }
+
+  if (strcmp(line, "PINBALL,LIST") == 0) {
+    for (uint8_t i = 0; i < sizeof(pinball::kNouns) / sizeof(pinball::kNouns[0]);
+         ++i) {
+      Serial.print(F("N"));
+      printTwoDigits(Serial, pinball::kNouns[i].noun);
+      Serial.print(F(" "));
+      Serial.print(pinball::kNouns[i].name);
+      Serial.print(F(" | "));
+      Serial.println(pinball::kNouns[i].components);
+    }
+    return;
+  }
+
+  if (strncmp(line, "PINBALL,", 8) == 0) {
+    const uint8_t noun =
+        static_cast<uint8_t>(strtoul(line + 8, nullptr, 10));
+    const pinball::NounInfo* info = pinball::find(noun);
+    if (info == nullptr) {
+      Serial.print(F("PINBALL N"));
+      printTwoDigits(Serial, noun);
+      Serial.println(F(" not mapped yet."));
+    } else {
+      Serial.print(F("PINBALL N"));
+      printTwoDigits(Serial, info->noun);
+      Serial.print(F(" "));
+      Serial.print(info->name);
+      Serial.print(F(" | "));
+      Serial.println(info->components);
+    }
     return;
   }
 
@@ -1369,6 +1735,7 @@ void setup() {
   agcCore.start();
   calibrateJoystick();
   dsky::initState(&state);
+  dsky::initPhase(&phase);
   refreshDskyFromCore();
 
   delay(250);
@@ -1403,8 +1770,10 @@ void loop() {
   if (stateDirty || now - lastTelemetryMs >= kTelemetryPeriodMs) {
     lastTelemetryMs = now;
     emitStateFrame(panelSerial);
+    emitPhaseFrame(panelSerial);
     if (usbWantsRawState()) {
       emitStateFrame(Serial);
+      emitPhaseFrame(Serial);
     }
     stateDirty = false;
   }

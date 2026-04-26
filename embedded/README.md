@@ -22,10 +22,14 @@ What is implemented now:
 
 - a shared DSKY serial protocol
 - a reusable `agc::Core` with 15-bit words, erasable/fixed memory, register aliases, and a starter instruction loop
+- fixed-bank rope image loading hooks for `yaYUL` output
+- initial I/O channel, interrupt, and extended-instruction plumbing in the AGC core
 - an `ESP32` AGC core shell that sends status to both the DSKY slave and the PC USB serial monitor
 - ESP32 joystick input support for `VRX`, `VRY`, and `SW`
 - an Apollo 11 launch/ascent monitor simulation for first DSKY mission tests
 - an Apollo 11 mission command layer with DSKY commands for major nominal and abort situations
+- a first PINBALL noun reference map for monitor/debug commands
+- phase-label telemetry from ESP32 to the ESP8266 Web DSKY
 - an `ESP8266` DSKY slave with a Wi-Fi browser interface for the first bench test
 - a `Mega` starter that scans buttons, drives lamps, and mirrors state to an LCD
 
@@ -36,8 +40,12 @@ The ESP32 core currently runs a tiny AGC bring-up program that increments an era
 - `shared/agc_core.h`: first AGC CPU/memory layer
 - `shared/dsky_protocol.h`: protocol, key definitions, lamp bits, frame parsing
 - `esp32_agc_core/esp32_agc_core.ino`: ESP32 AGC core shell
+- `esp32_agc_core/rope_image.h`: generated or placeholder embedded rope image
 - `APOLLO11_MISSION_PROGRAM.md`: command table for the Apollo 11 mission program layer
 - `LAUNCH_SIMULATION_MANUAL.md`: launch simulation operating manual
+- `ROPE_BUILD.md`: rope conversion and loading path
+- `tools/rope_to_header.py`: converts rope word dumps into an ESP32 header
+- `shared/pinball_nouns.h`: first real PINBALL noun reference map
 - `esp8266_dsky_slave/esp8266_dsky_slave.ino`: ESP8266 DSKY slave, serial bridge, and web server
 - `esp8266_dsky_slave/web_dsky_page.h`: embedded browser DSKY page served by the ESP8266
 - `esp8266_dsky_slave/wifi_config.h.example`: optional local Wi-Fi config template
@@ -153,7 +161,7 @@ Open the ESP32 USB serial monitor at `115200`.
 The ESP32 automatically prints:
 
 - clean `AGC ...` human-readable status once per second
-- `STATE,...` machine-readable frames to the DSKY slave every 250 ms
+- `STATE,...` and `PHASE,...` machine-readable frames to the DSKY slave every 250 ms
 - `CORE ...` when you type `CORE`
 
 By default, the PC USB serial uses clean output only. The DSKY UART still receives raw `STATE,...` frames.
@@ -163,6 +171,13 @@ Useful ESP32 USB commands:
 - `HELP`
 - `STATUS`
 - `CORE`
+- `ROPE,INFO`
+- `ROPE,LOAD`
+- `CHAN,<octal-channel>`
+- `CHAN,<octal-channel>,<octal-word>`
+- `IRQ,<0-7>`
+- `PINBALL,<noun>`
+- `PINBALL,LIST`
 - `STATE`
 - `STEP`
 - `HALT`
@@ -291,6 +306,7 @@ From DSKY slaves to `ESP32`:
 From `ESP32` to DSKY slaves:
 
 - `STATE,<program>,<verb>,<noun>,<r1>,<r2>,<r3>,<alarm>,<flash>,<lampMask>,<missionSeconds>`
+- `PHASE,<label>,<r1Label>,<r2Label>,<r3Label>`
 
 Example:
 
@@ -313,15 +329,15 @@ STATE,0,16,36,+00012,+00034,+00056,1202,1,96,1234
 This is not yet:
 
 - a `yaYUL` build pipeline
-- a rope-image loader
-- a complete AGC CPU core
-- simulated IMU/CDU/radar channels
+- a historically faithful Block II AGC CPU
+- a complete `PINBALL` implementation
+- high-fidelity IMU/CDU/radar/propulsion physics
 
 Those are the next layers.
 
 ## Next milestones
 
-1. Expand the AGC CPU instruction set and addressing model.
-2. Add a host-side or build-time path for assembled rope images.
+1. Replace the bring-up program with a `yaYUL` rope image and test the exact opcodes it reaches.
+2. Tighten Block II instruction semantics, interrupt timing, and I/O channel behavior against the original AGC docs.
 3. Move the Mega LCD from temporary debug display toward a more DSKY-like numeric display.
 4. Expand the lamp set and key handling to track real `PINBALL` behavior more closely.

@@ -10,7 +10,8 @@
 namespace dsky {
 
 constexpr size_t kRegisterFieldSize = 8;
-constexpr size_t kLineBufferSize = 128;
+constexpr size_t kTextFieldSize = 32;
+constexpr size_t kLineBufferSize = 192;
 
 enum Lamp : uint32_t {
   kLampCompActy = 1UL << 0,
@@ -61,6 +62,13 @@ struct State {
   uint32_t missionSeconds;
 };
 
+struct Phase {
+  char label[kTextFieldSize];
+  char r1Label[kTextFieldSize];
+  char r2Label[kTextFieldSize];
+  char r3Label[kTextFieldSize];
+};
+
 inline void copyField(char* destination, size_t destinationSize,
                       const char* source) {
   if (destination == nullptr || destinationSize == 0) {
@@ -91,6 +99,17 @@ inline void initState(State* state) {
   state->flashVerbNoun = false;
   state->lampMask = 0;
   state->missionSeconds = 0;
+}
+
+inline void initPhase(Phase* phase) {
+  if (phase == nullptr) {
+    return;
+  }
+
+  copyField(phase->label, sizeof(phase->label), "IDLE");
+  copyField(phase->r1Label, sizeof(phase->r1Label), "R1");
+  copyField(phase->r2Label, sizeof(phase->r2Label), "R2");
+  copyField(phase->r3Label, sizeof(phase->r3Label), "R3");
 }
 
 inline void setLamp(State* state, Lamp lamp, bool enabled) {
@@ -268,6 +287,18 @@ inline bool formatStateLine(const State& state, char* buffer,
   return written > 0 && static_cast<size_t>(written) < bufferSize;
 }
 
+inline bool formatPhaseLine(const Phase& phase, char* buffer,
+                            size_t bufferSize) {
+  if (buffer == nullptr || bufferSize == 0) {
+    return false;
+  }
+
+  const int written = snprintf(buffer, bufferSize, "PHASE,%s,%s,%s,%s",
+                               phase.label, phase.r1Label, phase.r2Label,
+                               phase.r3Label);
+  return written > 0 && static_cast<size_t>(written) < bufferSize;
+}
+
 inline bool parseStateLine(char* line, State* state) {
   if (line == nullptr || state == nullptr) {
     return false;
@@ -338,6 +369,44 @@ inline bool parseStateLine(char* line, State* state) {
     return false;
   }
   state->missionSeconds = static_cast<uint32_t>(strtoul(token, nullptr, 10));
+
+  return true;
+}
+
+inline bool parsePhaseLine(char* line, Phase* phase) {
+  if (line == nullptr || phase == nullptr) {
+    return false;
+  }
+
+  char* savePtr = nullptr;
+  char* token = strtok_r(line, ",", &savePtr);
+  if (token == nullptr || strcmp(token, "PHASE") != 0) {
+    return false;
+  }
+
+  token = strtok_r(nullptr, ",", &savePtr);
+  if (token == nullptr) {
+    return false;
+  }
+  copyField(phase->label, sizeof(phase->label), token);
+
+  token = strtok_r(nullptr, ",", &savePtr);
+  if (token == nullptr) {
+    return false;
+  }
+  copyField(phase->r1Label, sizeof(phase->r1Label), token);
+
+  token = strtok_r(nullptr, ",", &savePtr);
+  if (token == nullptr) {
+    return false;
+  }
+  copyField(phase->r2Label, sizeof(phase->r2Label), token);
+
+  token = strtok_r(nullptr, ",", &savePtr);
+  if (token == nullptr) {
+    return false;
+  }
+  copyField(phase->r3Label, sizeof(phase->r3Label), token);
 
   return true;
 }

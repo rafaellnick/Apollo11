@@ -174,6 +174,10 @@ const char kDskyIndexHtml[] PROGMEM = R"DSKYHTML(
       font: 13px/1.35 Verdana, sans-serif;
     }
 
+    .phase-row {
+      grid-column: 1 / -1;
+    }
+
     .meta b {
       color: var(--display-hot);
       font-family: "Courier New", monospace;
@@ -289,9 +293,9 @@ const char kDskyIndexHtml[] PROGMEM = R"DSKYHTML(
         </div>
 
         <div class="registers">
-          <div class="register"><strong>R1</strong><span id="r1">+00000</span></div>
-          <div class="register"><strong>R2</strong><span id="r2">+00000</span></div>
-          <div class="register"><strong>R3</strong><span id="r3">+00000</span></div>
+          <div class="register"><strong id="r1Name">R1</strong><span id="r1">+00000</span></div>
+          <div class="register"><strong id="r2Name">R2</strong><span id="r2">+00000</span></div>
+          <div class="register"><strong id="r3Name">R3</strong><span id="r3">+00000</span></div>
         </div>
 
         <div class="lamp-grid" id="lamps">
@@ -308,6 +312,7 @@ const char kDskyIndexHtml[] PROGMEM = R"DSKYHTML(
         </div>
 
         <div class="meta">
+          <div class="phase-row">PHASE <b id="phase">IDLE</b></div>
           <div>ALARM <b id="alarm">0000</b></div>
           <div>LINK <b id="link">DOWN</b></div>
           <div>SEC <b id="cycles">0</b></div>
@@ -351,7 +356,7 @@ const char kDskyIndexHtml[] PROGMEM = R"DSKYHTML(
   </main>
 
   <script>
-    const ids = ["program", "verb", "noun", "r1", "r2", "r3", "alarm", "link", "cycles", "lastKey"];
+    const ids = ["program", "verb", "noun", "r1", "r2", "r3", "r1Name", "r2Name", "r3Name", "phase", "alarm", "link", "cycles", "lastKey"];
     const el = Object.fromEntries(ids.map((id) => [id, document.getElementById(id)]));
     const httpDot = document.getElementById("httpDot");
     const httpStatus = document.getElementById("httpStatus");
@@ -380,6 +385,10 @@ const char kDskyIndexHtml[] PROGMEM = R"DSKYHTML(
       el.r1.textContent = state.r1 || "+00000";
       el.r2.textContent = state.r2 || "+00000";
       el.r3.textContent = state.r3 || "+00000";
+      el.r1Name.textContent = state.r1Label || "R1";
+      el.r2Name.textContent = state.r2Label || "R2";
+      el.r3Name.textContent = state.r3Label || "R3";
+      el.phase.textContent = state.phase || "IDLE";
       el.alarm.textContent = padAlarm(state.alarm);
       el.link.textContent = state.link ? "UP" : "DOWN";
       el.cycles.textContent = state.missionSeconds ?? 0;

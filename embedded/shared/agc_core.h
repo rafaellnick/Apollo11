@@ -8,6 +8,12 @@
 
 namespace agc {
 
+struct RopeImage {
+  const uint16_t* words;
+  uint8_t bankCount;
+  const char* name;
+};
+
 class Core {
  public:
   static constexpr uint16_t kWordMask = 077777;
@@ -19,6 +25,8 @@ class Core {
   static constexpr uint8_t kFixedBanks = 36;
   static constexpr size_t kFixedWords =
       static_cast<size_t>(kFixedBanks) * kFixedBankSize;
+  static constexpr uint8_t kIoChannels = 128;
+  static constexpr uint8_t kInterruptCount = 8;
 
   static constexpr uint16_t kRegA = 00000;
   static constexpr uint16_t kRegL = 00001;
@@ -27,6 +35,16 @@ class Core {
   static constexpr uint16_t kRegFBANK = 00004;
   static constexpr uint16_t kRegZ = 00005;
   static constexpr uint16_t kRegBBANK = 00006;
+  static constexpr uint16_t kRegZERO = 00007;
+  static constexpr uint16_t kRegARUPT = 00010;
+  static constexpr uint16_t kRegLRUPT = 00011;
+  static constexpr uint16_t kRegQRUPT = 00012;
+  static constexpr uint16_t kRegZRUPT = 00013;
+  static constexpr uint16_t kRegBRUPT = 00014;
+  static constexpr uint16_t kRegCYR = 00020;
+  static constexpr uint16_t kRegSR = 00021;
+  static constexpr uint16_t kRegCYL = 00022;
+  static constexpr uint16_t kRegEDOP = 00023;
 
   static constexpr uint16_t kBootAddress = 04000;
   static constexpr uint16_t kPanelCounter = 00100;
@@ -39,6 +57,13 @@ class Core {
   static constexpr uint16_t kInputRhcY = 00111;
   static constexpr uint16_t kInputRhcSwitch = 00112;
 
+  static constexpr uint16_t kChannelDSKY = 0010;
+  static constexpr uint16_t kChannelKey = 0015;
+  static constexpr uint16_t kChannelOut0 = 0010;
+  static constexpr uint16_t kChannelOut1 = 0011;
+  static constexpr uint16_t kChannelOut2 = 0012;
+  static constexpr uint16_t kChannelOut3 = 0013;
+
   enum class RunState : uint8_t {
     Halted = 0,
     Running,
@@ -50,6 +75,8 @@ class Core {
     FixedWrite,
     BadFixedAddress,
     ExtendedNotImplemented,
+    DivideByZero,
+    BadRopeImage,
   };
 
   Core() { reset(); }
@@ -57,14 +84,21 @@ class Core {
   void reset() {
     memset(erasable_, 0, sizeof(erasable_));
     memset(fixed_, 0, sizeof(fixed_));
+    memset(channels_, 0, sizeof(channels_));
     runState_ = RunState::Halted;
     fault_ = Fault::None;
     cycles_ = 0;
     indexPending_ = false;
     indexValue_ = 0;
+    extendPending_ = false;
+    interruptsEnabled_ = true;
+    interruptsInhibited_ = false;
+    pendingInterruptMask_ = 0;
+    activeInterrupt_ = 0;
     lastInstruction_ = 0;
     lastAddress_ = 0;
     lastOpcode_ = 0;
+    lastExtended_ = false;
     loadBringupProgram();
   }
 
@@ -107,6 +141,8 @@ class Core {
       return false;
     }
 
+    serviceInterrupt();
+
     const uint16_t pc = getZ();
     uint16_t instruction = read(pc);
     setZ(incrementAddress(pc, 1));
@@ -120,9 +156,16 @@ class Core {
     lastInstruction_ = instruction;
     lastAddress_ = pc;
     lastOpcode_ = static_cast<uint8_t>((instruction >> 12) & 07);
+    lastExtended_ = extendPending_;
 
     const uint16_t operand = instruction & kAddressMask;
-    executeBasic(lastOpcode_, operand);
+    if (extendPending_) {
+      extendPending_ = false;
+      executeExtended(lastOpcode_, operand);
+    } else {
+      executeBasic(lastOpcode_, operand);
+    }
+
     cycles_++;
     return runState_ != RunState::Faulted;
   }
@@ -155,7 +198,7 @@ class Core {
     value &= kWordMask;
 
     if (address < kErasableWords) {
-      erasable_[address] = value;
+      writeErasable(address, value);
       return true;
     }
 
@@ -164,11 +207,35 @@ class Core {
   }
 
   uint16_t readErasable(uint16_t address) const {
-    return erasable_[address & (kErasableWords - 1)] & kWordMask;
+    address &= (kErasableWords - 1);
+    if (address == kRegZERO) {
+      return 0;
+    }
+
+    return erasable_[address] & kWordMask;
   }
 
   void writeErasable(uint16_t address, uint16_t value) {
-    erasable_[address & (kErasableWords - 1)] = value & kWordMask;
+    address &= (kErasableWords - 1);
+    value &= kWordMask;
+
+    switch (address) {
+      case kRegZERO:
+        return;
+      case kRegCYR:
+        value = rotateRight(value);
+        break;
+      case kRegSR:
+        value = shiftRight(value);
+        break;
+      case kRegCYL:
+        value = rotateLeft(value);
+        break;
+      default:
+        break;
+    }
+
+    erasable_[address] = value;
   }
 
   bool writeFixed(uint16_t address, uint16_t value) {
@@ -181,6 +248,82 @@ class Core {
     fixed_[index] = value & kWordMask;
     return true;
   }
+
+  bool writeFixedBank(uint8_t bank, uint16_t offset, uint16_t value) {
+    if (bank >= kFixedBanks || offset >= kFixedBankSize) {
+      setFault(Fault::BadFixedAddress);
+      return false;
+    }
+
+    fixed_[static_cast<size_t>(bank) * kFixedBankSize + offset] =
+        value & kWordMask;
+    return true;
+  }
+
+  bool loadFixedBank(uint8_t bank, const uint16_t* words, size_t count) {
+    if (bank >= kFixedBanks || words == nullptr || count > kFixedBankSize) {
+      setFault(Fault::BadRopeImage);
+      return false;
+    }
+
+    for (size_t i = 0; i < kFixedBankSize; ++i) {
+      fixed_[static_cast<size_t>(bank) * kFixedBankSize + i] =
+          i < count ? words[i] & kWordMask : 0;
+    }
+
+    return true;
+  }
+
+  bool loadRopeImage(const RopeImage& image) {
+    if (image.words == nullptr || image.bankCount == 0 ||
+        image.bankCount > kFixedBanks) {
+      setFault(Fault::BadRopeImage);
+      return false;
+    }
+
+    memset(fixed_, 0, sizeof(fixed_));
+    for (uint8_t bank = 0; bank < image.bankCount; ++bank) {
+      if (!loadFixedBank(bank, image.words + bank * kFixedBankSize,
+                         kFixedBankSize)) {
+        return false;
+      }
+    }
+
+    setZ(kBootAddress);
+    return true;
+  }
+
+  uint16_t readChannel(uint8_t channel) const {
+    return channels_[channel & (kIoChannels - 1)] & kWordMask;
+  }
+
+  void writeChannel(uint8_t channel, uint16_t value) {
+    channels_[channel & (kIoChannels - 1)] = value & kWordMask;
+  }
+
+  void setInterruptsEnabled(bool enabled) {
+    interruptsEnabled_ = enabled;
+    if (enabled) {
+      interruptsInhibited_ = false;
+    }
+  }
+
+  void requestInterrupt(uint8_t interruptNumber) {
+    if (interruptNumber < kInterruptCount) {
+      pendingInterruptMask_ |= static_cast<uint8_t>(1U << interruptNumber);
+    }
+  }
+
+  void clearInterrupt(uint8_t interruptNumber) {
+    if (interruptNumber < kInterruptCount) {
+      pendingInterruptMask_ &=
+          static_cast<uint8_t>(~static_cast<uint8_t>(1U << interruptNumber));
+    }
+  }
+
+  uint8_t pendingInterruptMask() const { return pendingInterruptMask_; }
+  bool interruptsEnabled() const { return interruptsEnabled_; }
+  bool lastInstructionExtended() const { return lastExtended_; }
 
   uint16_t getA() const { return readErasable(kRegA); }
   void setA(uint16_t value) { writeErasable(kRegA, value); }
@@ -279,14 +422,37 @@ class Core {
     return static_cast<uint16_t>((positiveMagnitude - 1) & kPositiveMask);
   }
 
-  static bool fixedIndex(uint16_t address, size_t* index) {
+  static uint16_t rotateRight(uint16_t word) {
+    word &= kWordMask;
+    return static_cast<uint16_t>((word >> 1) | ((word & 1U) << 14));
+  }
+
+  static uint16_t rotateLeft(uint16_t word) {
+    word &= kWordMask;
+    return static_cast<uint16_t>(((word << 1) & kWordMask) |
+                                 ((word >> 14) & 1U));
+  }
+
+  static uint16_t shiftRight(uint16_t word) {
+    word &= kWordMask;
+    return static_cast<uint16_t>((word & kSignBit) |
+                                 ((word >> 1) & kPositiveMask));
+  }
+
+  uint8_t selectedFixedBank() const {
+    const uint8_t bank =
+        static_cast<uint8_t>(readErasable(kRegFBANK) & 077);
+    return bank < kFixedBanks ? bank : static_cast<uint8_t>(bank % kFixedBanks);
+  }
+
+  bool fixedIndex(uint16_t address, size_t* index) const {
     address &= kAddressMask;
 
     if (address < 04000) {
       return false;
     }
 
-    const uint8_t bank = address < 06000 ? 2 : 3;
+    const uint8_t bank = address < 06000 ? 2 : selectedFixedBank();
     const uint16_t offset = address & (kFixedBankSize - 1);
     const size_t resolved =
         static_cast<size_t>(bank) * kFixedBankSize + offset;
@@ -305,7 +471,11 @@ class Core {
   void executeBasic(uint8_t opcode, uint16_t operand) {
     switch (opcode & 07) {
       case 0:
-        executeTc(operand);
+        if (operand == kRegBBANK) {
+          extendPending_ = true;
+        } else {
+          executeTc(operand);
+        }
         break;
       case 1:
         executeCcs(operand);
@@ -335,6 +505,91 @@ class Core {
   void executeTc(uint16_t operand) {
     writeErasable(kRegQ, getZ());
     setZ(operand);
+  }
+
+  void executeExtended(uint8_t opcode, uint16_t operand) {
+    switch (opcode & 07) {
+      case 0:
+        if (operand == kRegQ) {
+          resumeFromInterrupt();
+        } else {
+          executeTc(operand);
+        }
+        break;
+      case 1:
+        executeDivide(operand);
+        break;
+      case 2:
+        if (getA() == 0 || getA() == kWordMask) {
+          setZ(operand);
+        }
+        break;
+      case 3:
+        setA(addOnesComplement(getA(), negate(read(operand))));
+        break;
+      case 4:
+        setA(readChannel(static_cast<uint8_t>(operand)));
+        break;
+      case 5:
+        writeChannel(static_cast<uint8_t>(operand), getA());
+        break;
+      case 6:
+        setA(static_cast<uint16_t>(
+            getA() & readChannel(static_cast<uint8_t>(operand))));
+        break;
+      case 7:
+        setA(static_cast<uint16_t>(
+            getA() ^ readChannel(static_cast<uint8_t>(operand))));
+        break;
+    }
+  }
+
+  void executeDivide(uint16_t operand) {
+    const int16_t divisor = toInt(read(operand));
+    if (divisor == 0) {
+      setFault(Fault::DivideByZero);
+      return;
+    }
+
+    const int16_t quotient =
+        static_cast<int16_t>(toInt(getA()) / divisor);
+    const int16_t remainder =
+        static_cast<int16_t>(toInt(getA()) % divisor);
+    setA(fromInt(quotient));
+    writeErasable(kRegL, fromInt(remainder));
+  }
+
+  bool serviceInterrupt() {
+    if (!interruptsEnabled_ || interruptsInhibited_ ||
+        pendingInterruptMask_ == 0) {
+      return false;
+    }
+
+    for (uint8_t i = 0; i < kInterruptCount; ++i) {
+      if ((pendingInterruptMask_ & (1U << i)) == 0) {
+        continue;
+      }
+
+      pendingInterruptMask_ &= static_cast<uint8_t>(~(1U << i));
+      activeInterrupt_ = i;
+      writeErasable(kRegZRUPT, getZ());
+      writeErasable(kRegQRUPT, readErasable(kRegQ));
+      writeErasable(kRegARUPT, getA());
+      writeErasable(kRegLRUPT, readErasable(kRegL));
+      interruptsInhibited_ = true;
+      setZ(static_cast<uint16_t>(04004 + i * 4));
+      return true;
+    }
+
+    return false;
+  }
+
+  void resumeFromInterrupt() {
+    setA(readErasable(kRegARUPT));
+    writeErasable(kRegL, readErasable(kRegLRUPT));
+    writeErasable(kRegQ, readErasable(kRegQRUPT));
+    setZ(readErasable(kRegZRUPT));
+    interruptsInhibited_ = false;
   }
 
   void executeXch(uint16_t operand) {
@@ -379,14 +634,21 @@ class Core {
 
   uint16_t erasable_[kErasableWords];
   uint16_t fixed_[kFixedWords];
+  uint16_t channels_[kIoChannels];
   RunState runState_ = RunState::Halted;
   Fault fault_ = Fault::None;
   uint32_t cycles_ = 0;
   bool indexPending_ = false;
   uint16_t indexValue_ = 0;
+  bool extendPending_ = false;
+  bool interruptsEnabled_ = true;
+  bool interruptsInhibited_ = false;
+  uint8_t pendingInterruptMask_ = 0;
+  uint8_t activeInterrupt_ = 0;
   uint16_t lastInstruction_ = 0;
   uint16_t lastAddress_ = 0;
   uint8_t lastOpcode_ = 0;
+  bool lastExtended_ = false;
 };
 
 }  // namespace agc

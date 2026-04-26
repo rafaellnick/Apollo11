@@ -45,6 +45,7 @@ constexpr const char* kHostname = "agc-dsky";
 SoftwareSerial coreSerial(kCoreRxPin, kCoreTxPin);
 ESP8266WebServer webServer(80);
 dsky::State state;
+dsky::Phase phase;
 
 char coreLineBuffer[dsky::kLineBufferSize];
 size_t coreLineLength = 0;
@@ -91,7 +92,9 @@ void emitDskyStatus(Stream& port) {
   port.print(F(" FLASH="));
   port.print(state.flashVerbNoun ? 1 : 0);
   port.print(F(" LAMPS="));
-  port.println(state.lampMask, HEX);
+  port.print(state.lampMask, HEX);
+  port.print(F(" PHASE="));
+  port.println(phase.label);
 }
 
 void sendKey(dsky::Key key) {
@@ -165,7 +168,7 @@ void handleRoot() {
 }
 
 void handleApiState() {
-  char payload[520];
+  char payload[720];
   const String ip = webIpText();
   const String wifi = webWifiName();
   const char* mode = wifiApMode ? "AP" : "STA";
@@ -175,7 +178,9 @@ void handleApiState() {
            "\"r1\":\"%s\",\"r2\":\"%s\",\"r3\":\"%s\",\"alarm\":%u,"
            "\"flash\":%s,\"lamps\":%lu,\"missionSeconds\":%lu,"
            "\"uptimeMs\":%lu,\"lastKey\":\"%s\",\"lastKeyAgeMs\":%lu,"
-           "\"mode\":\"%s\",\"ip\":\"%s\",\"wifi\":\"%s\"}",
+           "\"mode\":\"%s\",\"ip\":\"%s\",\"wifi\":\"%s\","
+           "\"phase\":\"%s\",\"r1Label\":\"%s\",\"r2Label\":\"%s\","
+           "\"r3Label\":\"%s\"}",
            linkUp() ? "true" : "false",
            static_cast<unsigned int>(state.program),
            static_cast<unsigned int>(state.verb),
@@ -186,7 +191,8 @@ void handleApiState() {
            static_cast<unsigned long>(state.missionSeconds),
            static_cast<unsigned long>(millis()), lastKeyName,
            static_cast<unsigned long>(millis() - lastKeyTxMs), mode,
-           ip.c_str(), wifi.c_str());
+           ip.c_str(), wifi.c_str(), phase.label, phase.r1Label,
+           phase.r2Label, phase.r3Label);
 
   webServer.sendHeader("Cache-Control", "no-store");
   webServer.send(200, "application/json", payload);
@@ -326,6 +332,14 @@ void handleCoreLine(char* line) {
     state = parsed;
     lastStateRxMs = millis();
     emitDskyStatus(Serial);
+    return;
+  }
+
+  dsky::Phase parsedPhase;
+  dsky::initPhase(&parsedPhase);
+  if (dsky::parsePhaseLine(line, &parsedPhase)) {
+    phase = parsedPhase;
+    emitDskyStatus(Serial);
   }
 }
 
@@ -418,6 +432,7 @@ void updateStatusLed() {
 
 void setup() {
   dsky::initState(&state);
+  dsky::initPhase(&phase);
 
 #if defined(LED_BUILTIN)
   pinMode(LED_BUILTIN, OUTPUT);

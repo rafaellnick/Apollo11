@@ -161,10 +161,20 @@ Esta camada e intencionalmente operacional, nao historicamente perfeita:
 
 O valor dela agora e permitir testar o DSKY e a arquitetura ESP32/ESP8266 em todos os grandes modos de missao enquanto o core AGC nativo evolui.
 
-## Proximos passos tecnicos
+## Status dos proximos passos tecnicos
 
-1. Carregar imagens de rope montadas pelo `yaYUL`.
-2. Expandir o core AGC para instrucoes estendidas, interrupts e canais I/O.
-3. Mapear nouns reais do `PINBALL`.
-4. Substituir os valores resumidos por telemetria calculada por modelos de IMU, radar e propulsao.
-5. Fazer o DSKY web exibir tambem nome textual da fase recebida por uma extensao do protocolo.
+Implementado neste bloco:
+
+- caminho inicial para carregar imagens de rope geradas externamente pelo `yaYUL`
+- loader `ROPE,INFO` / `ROPE,LOAD` para o ESP32
+- infraestrutura de instrucoes estendidas, interrupts, canais I/O e registradores especiais basicos no core AGC
+- mapa inicial de nouns reais do `PINBALL` para consulta serial
+- modelo de telemetria de missao com IMU, radar e propulsao sinteticos
+- extensao `PHASE,...` do protocolo para o Web DSKY exibir fase e nomes dos registradores
+
+Ainda falta para ficar historicamente fiel:
+
+- montar e validar uma imagem real do Comanche/Luminary com `yaYUL`
+- completar a semantica exata de todos os opcodes Block II
+- implementar timing fiel de interrupts, downrupt, uplink/downlink e perifericos
+- substituir os modelos sinteticos por simuladores fisicos/orbitais mais rigorosos
